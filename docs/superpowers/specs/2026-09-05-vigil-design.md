@@ -58,8 +58,8 @@ These were considered and deferred. None of them is precluded by anything below.
 Sentry, GlitchTip and Highlight all solve error tracking, and self-host. They were rejected
 because the intent is broader than error tracking — errors and uptime today, under one dashboard
 the owner controls, with room for signals no error tracker collects — and because the operator
-is one person watching a handful of small applications, a scale at which a small owned tool is cheaper
-to run and to understand than a large adopted one.
+is one person watching a handful of small applications, a scale at which a small owned tool is
+cheaper to run and to understand than a large adopted one.
 
 The cost accepted: vigil will do considerably less than Sentry, and every capability it gains
 is one somebody wrote.

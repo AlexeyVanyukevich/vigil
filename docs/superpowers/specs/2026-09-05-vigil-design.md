@@ -10,19 +10,21 @@ Status: **designed**, 2026-09-05. Not built.
 > Read it to learn **why** something has the shape it does. For **what** the system does today,
 > read `docs/architecture.md` once it exists.
 
-This is the founding design record of this repository, written before any code in a
-`cabins-admin` session on 2026-09-05 — that being the first application that needed watching.
+This is the founding design record of this repository, written before any code on 2026-09-05.
 Vigil is standalone and **consumes nothing**: it shares no code and no database with any
 application it monitors, and monitored applications depend only on its published client package.
+
+Throughout, **the reference application** means the first application to be watched. Its
+conventions are the ones vigil borrows, and it is the first consumer of the client package.
 
 ---
 
 ## 1. Purpose
 
-Four applications run on this machine — `cabins-admin`, `booking-engine`, `AdPulse`, `UBP` —
-and there is no way to learn that one of them threw, crashed, or stopped answering, short of
-opening it and looking. A double-booked house, a wedged process, an expired certificate: all of
-them are currently discovered by a person noticing.
+Several applications run on one host, with more expected, and there is no way to learn that one
+of them threw, crashed, or stopped answering short of opening it and looking. A silent data
+error, a wedged process, an expired certificate: all of them are currently discovered by a
+person noticing.
 
 Vigil records application failures and uncaught exceptions from every connected app, probes
 each app from outside to see whether it is answering at all, and notifies the owner when
@@ -56,7 +58,7 @@ These were considered and deferred. None of them is precluded by anything below.
 Sentry, GlitchTip and Highlight all solve error tracking, and self-host. They were rejected
 because the intent is broader than error tracking — errors and uptime today, under one dashboard
 the owner controls, with room for signals no error tracker collects — and because the operator
-is one person watching four small applications, a scale at which a small owned tool is cheaper
+is one person watching a handful of small applications, a scale at which a small owned tool is cheaper
 to run and to understand than a large adopted one.
 
 The cost accepted: vigil will do considerably less than Sentry, and every capability it gains
@@ -76,8 +78,8 @@ One repository, three deliverables:
 
 Stack, module layout (`routes` / `service` / `repository` per module), error shape
 `{ error, message, details? }`, `additionalProperties: false` on every body, and the
-single-owner argon2 + sliding-session auth are all taken from `cabins-admin`, whose conventions
-are documented in its `CONTRIBUTING.md`. Nothing new is introduced without a reason.
+single-owner argon2 + sliding-session auth are all taken from the reference application, whose
+conventions are documented in its `CONTRIBUTING.md`. Nothing new is introduced without a reason.
 
 Client and server ship from one repository so that a change to the wire format is one commit
 with one test suite, rather than a two-repository dance with a version bump in between. This
@@ -153,7 +155,8 @@ without further work. This was the decisive argument.
 
 ## 5. Data model
 
-Postgres, Kysely, migrations in the `cabins-admin` style. Money and currency do not appear.
+Postgres, Kysely, migrations in the reference application's style. Money and currency do not
+appear.
 
 ### Identity
 
@@ -164,8 +167,8 @@ Postgres, Kysely, migrations in the `cabins-admin` style. Money and currency do 
 
 Keys are 256-bit random tokens, so **SHA-256 is correct here where argon2 is correct for the
 owner's password**: the token has no entropy problem to stretch, and the digest must be
-directly indexable for lookup. This deliberate inconsistency with `cabins-admin`'s password
-handling is the point, not an oversight.
+directly indexable for lookup. This deliberate inconsistency with the reference application's
+password handling is the point, not an oversight.
 
 The plaintext key is shown **once**, at creation. Only the digest is stored, so a lost key is
 reissued and never recovered.
@@ -219,12 +222,12 @@ may legitimately alert again after being resolved and regressing:
 | `monitor.down` | `incident:<incident_id>:down` |
 | `monitor.up` | `incident:<incident_id>:up` |
 
-No subscription join table. At four applications and one owner, a nullable `app_id` and an
+No subscription join table. At a handful of applications and one owner, a nullable `app_id` and an
 `events` array on the channel is the whole requirement.
 
 ### Owner
 
-`owner` and `session`, copied from `cabins-admin`'s auth module: argon2 password hash, random
+`owner` and `session`, copied from the reference application's auth module: argon2 password hash, random
 session token, expiry slid at most once an hour.
 
 ---
@@ -298,10 +301,10 @@ most thorough unit tests in the project (§12).
 
 - **`/node`** — `install({ url, key, app, environment })` hooks `uncaughtException` and
   `unhandledRejection`; `captureError(err, context)` is called from a framework error handler.
-  In `cabins-admin` that is one line inside the existing `registerErrorHandler`.
+  In the reference application that is one line inside the existing `registerErrorHandler`.
 - **`/browser`** — hooks `window.onerror` and `unhandledrejection`, posts directly to vigil with
   the public key, and **queues and flushes when offline**, in the same shape as
-  `cabins-admin`'s existing offline intent queue. Errors then arrive late with `occurred_at`
+  the reference application's existing offline intent queue. Errors then arrive late with `occurred_at`
   preserved, which is what §5's two timestamps exist for.
 
 Four rules the transport must obey, because the characteristic failure of a monitoring client is
@@ -319,7 +322,8 @@ that it damages the application it watches:
 
 ### Redaction is a hard requirement
 
-`cabins-admin`'s governing invariant is that the engine API key never leaves its server, and a
+The reference application's governing invariant is that a third-party API key never leaves its
+server, and a
 stack trace or captured request context is a plausible way for it to escape. The client scrubs
 `authorization`, `cookie`, `set-cookie` and configured secret values **before anything is
 queued**, mirroring the redaction already configured in that project's pino logger.
@@ -363,7 +367,7 @@ it is what makes §3's "same host" deployment honest: ambiguous silence becomes 
 
 ### A note outside this project
 
-`cabins-admin`'s `/api/health` returns `{ status: 'ok' }` unconditionally and will therefore
+The reference application's `/api/health` returns `{ status: 'ok' }` unconditionally and will therefore
 report healthy with a dead database. A health endpoint that touches its own critical
 dependencies and answers 503 when they are gone is the difference between monitoring a process
 and monitoring a service. That is a change to each application, not to vigil, and is recorded
@@ -448,8 +452,8 @@ recovered.
 
 ## 12. Testing
 
-vitest with a testcontainers Postgres, and Playwright for the dashboard — the setup
-`cabins-admin` already uses.
+vitest with a testcontainers Postgres, and Playwright for the dashboard — the setup the
+reference application already uses.
 
 - **Pure functions get unit tests.** Fingerprint normalization above all, per §7, plus redaction
   and the throttles.
@@ -493,7 +497,7 @@ is independently useful and independently testable. Each gets its own plan.
 **Slice 1 — errors end to end.** Migrations for `app`, `ingest_key`, `issue`, `event`; the
 ingest endpoint with server keys only; fingerprinting; the client package's `/node` entry point;
 a minimal dashboard with login, an issues list and an issue detail. At the end of this slice,
-`cabins-admin` reports its exceptions and the owner can read them. **This is the slice that
+the reference application reports its exceptions and the owner can read them. **This is the slice that
 delivers the driving case in §1**, and nothing below it should start first.
 
 **Slice 2 — alerting.** `notification_channel` and the outbox, the worker loop, the webhook

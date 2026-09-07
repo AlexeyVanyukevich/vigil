@@ -1,7 +1,7 @@
 # vigil
 
-Health monitoring for the applications on this machine — `cabins-admin`, `booking-engine`,
-`AdPulse`, `UBP`, and whatever comes next.
+Health monitoring for the applications running on one host — the ones there today, and whatever
+comes next.
 
 It does two things:
 

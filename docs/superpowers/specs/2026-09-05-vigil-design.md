@@ -227,8 +227,8 @@ No subscription join table. At a handful of applications and one owner, a nullab
 
 ### Owner
 
-`owner` and `session`, copied from the reference application's auth module: argon2 password hash, random
-session token, expiry slid at most once an hour.
+`owner` and `session`, copied from the reference application's auth module: argon2 password
+hash, random session token, expiry slid at most once an hour.
 
 ---
 
@@ -304,8 +304,8 @@ most thorough unit tests in the project (§12).
   In the reference application that is one line inside the existing `registerErrorHandler`.
 - **`/browser`** — hooks `window.onerror` and `unhandledrejection`, posts directly to vigil with
   the public key, and **queues and flushes when offline**, in the same shape as
-  the reference application's existing offline intent queue. Errors then arrive late with `occurred_at`
-  preserved, which is what §5's two timestamps exist for.
+  the reference application's existing offline intent queue. Errors then arrive late with
+  `occurred_at` preserved, which is what §5's two timestamps exist for.
 
 Four rules the transport must obey, because the characteristic failure of a monitoring client is
 that it damages the application it watches:
@@ -323,8 +323,8 @@ that it damages the application it watches:
 ### Redaction is a hard requirement
 
 The reference application's governing invariant is that a third-party API key never leaves its
-server, and a
-stack trace or captured request context is a plausible way for it to escape. The client scrubs
+server, and a stack trace or captured request context is a plausible way for it to escape. The
+client scrubs
 `authorization`, `cookie`, `set-cookie` and configured secret values **before anything is
 queued**, mirroring the redaction already configured in that project's pino logger.
 
@@ -367,8 +367,8 @@ it is what makes §3's "same host" deployment honest: ambiguous silence becomes 
 
 ### A note outside this project
 
-The reference application's `/api/health` returns `{ status: 'ok' }` unconditionally and will therefore
-report healthy with a dead database. A health endpoint that touches its own critical
+The reference application's `/api/health` returns `{ status: 'ok' }` unconditionally and will
+therefore report healthy with a dead database. A health endpoint that touches its own critical
 dependencies and answers 503 when they are gone is the difference between monitoring a process
 and monitoring a service. That is a change to each application, not to vigil, and is recorded
 here only so it is not forgotten.
@@ -497,8 +497,8 @@ is independently useful and independently testable. Each gets its own plan.
 **Slice 1 — errors end to end.** Migrations for `app`, `ingest_key`, `issue`, `event`; the
 ingest endpoint with server keys only; fingerprinting; the client package's `/node` entry point;
 a minimal dashboard with login, an issues list and an issue detail. At the end of this slice,
-the reference application reports its exceptions and the owner can read them. **This is the slice that
-delivers the driving case in §1**, and nothing below it should start first.
+the reference application reports its exceptions and the owner can read them. **This is the
+slice that delivers the driving case in §1**, and nothing below it should start first.
 
 **Slice 2 — alerting.** `notification_channel` and the outbox, the worker loop, the webhook
 channel with its payload template, the three throttles, Send test, and channel settings. At the

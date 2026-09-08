@@ -83,10 +83,10 @@ point (all Slice 4); notification channels and the outbox (Slice 2); monitors, p
 incidents (Slice 3); retention pruning (Slice 4's neighbour, §14).
 
 **Commits.** Conventional Commits, `type(scope): subject`, imperative mood, lowercase, ≤72
-characters. The reference application's `CONTRIBUTING.md` forbids a body or a `Co-Authored-By`
-trailer; this session's harness requires the trailer. This plan writes the trailer. **Ask the
-owner which rule vigil's own `CONTRIBUTING.md` should state before Task 1 writes it** — it is a
-one-line decision, and Task 1 is where it gets recorded.
+characters. **The subject line is the whole message: no body, no footers, no `Co-Authored-By`
+trailer** — the reference application's rule, settled on 2026-09-08 as the shared one across
+every project. Reasoning that outlives a commit belongs in `docs/architecture.md` or a spec,
+and a change that seems to need a paragraph is a change that wants splitting.
 
 **Before every commit:** `./run check` from the repository root.
 
@@ -166,11 +166,7 @@ docs/architecture.md             written by the last task
   `maxEventsPerBatch: number`, `maxStackBytes: number`, `maxContextBytes: number`.
   Every later task builds its test app from this shape.
 
-- [ ] **Step 1: Ask the owner the commit-message question, then write the root files**
-
-Global Constraints names one open decision: whether vigil's `CONTRIBUTING.md` forbids a commit
-body and `Co-Authored-By` trailer (the reference application's rule) or requires the trailer.
-Ask, then write the answer into `CONTRIBUTING.md` below. Everything else here is settled.
+- [ ] **Step 1: Write the root files**
 
 `package.json`:
 
@@ -787,12 +783,7 @@ the slice ships, and that the last task of every slice updates `docs/architectur
 ```bash
 npx prettier --write .
 git add -A
-git commit -m "$(cat <<'EOF'
-build: scaffold the workspace and validated configuration
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "build: scaffold the workspace and validated configuration"
 ```
 
 ---
@@ -1428,12 +1419,7 @@ or the pool was created before it ran — it must be at module scope, above `cre
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(db): add the slice-1 schema, migration runner and test harness
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(db): add the slice-1 schema, migration runner and test harness"
 ```
 
 ---
@@ -1775,12 +1761,7 @@ Expected: PASS, 24 tests.
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(fingerprint): group occurrences by type and normalized stack frames
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(fingerprint): group occurrences by type and normalized stack frames"
 ```
 
 ---
@@ -2652,12 +2633,7 @@ Expected: PASS, 5 + 17 tests.
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(auth): add single-owner login and scope the guard to /api
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(auth): add single-owner login and scope the guard to /api"
 ```
 
 ---
@@ -3202,12 +3178,7 @@ again prints a second, different token, and both remain live — that is rotatio
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(ingest): add ingest keys, byte guards and the setup scripts
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(ingest): add ingest keys, byte guards and the setup scripts"
 ```
 
 ---
@@ -3922,12 +3893,7 @@ Expected: PASS, 28 + 17 tests.
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(ingest): accept batches on a server key and group them into issues
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(ingest): accept batches on a server key and group them into issues"
 ```
 
 ---
@@ -4468,12 +4434,7 @@ Expected: PASS, 20 tests.
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(issues): serve the issues list, detail and status changes
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(issues): serve the issues list, detail and status changes"
 ```
 
 ---
@@ -4761,12 +4722,7 @@ the recorded issue before changing any expectation.
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(self): record vigil's own failures without going through ingest
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(self): record vigil's own failures without going through ingest"
 ```
 
 ---
@@ -5248,12 +5204,7 @@ Expected: PASS, 10 + 13 tests.
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(client): add redaction and the wire payload builder
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(client): add redaction and the wire payload builder"
 ```
 
 ---
@@ -5619,12 +5570,7 @@ Expected: PASS — the two new files add 10 + 6 tests to Task 9's 23.
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(client): add the bounded collapsing queue and the transport
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(client): add the bounded collapsing queue and the transport"
 ```
 
 ---
@@ -6299,12 +6245,7 @@ Expected: PASS everywhere.
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(client): add the node entry point and prove it against the endpoint
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(client): add the node entry point and prove it against the endpoint"
 ```
 
 ---
@@ -7058,12 +6999,7 @@ and the page says "Signed in."; a wrong one says "Wrong password". Then `./run s
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(web): add the dashboard workspace, api client and login screen
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(web): add the dashboard workspace, api client and login screen"
 ```
 
 ---
@@ -7455,12 +7391,7 @@ brings it back as open. Then `./run stop`.
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-feat(web): add the issues list and issue detail screens
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "feat(web): add the issues list and issue detail screens"
 ```
 
 ---
@@ -7752,12 +7683,7 @@ test asserting something the interface cannot do.
 ```bash
 ./run check
 git add -A
-git commit -m "$(cat <<'EOF'
-test(ui): drive the driving case through a browser
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "test(ui): drive the driving case through a browser"
 ```
 
 ---
@@ -7875,12 +7801,7 @@ any command in the README differs from what actually worked, the README is what 
 
 ```bash
 git add -A
-git commit -m "$(cat <<'EOF'
-docs: describe what slice 1 built and archive its plan
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-EOF
-)"
+git commit -m "docs: describe what slice 1 built and archive its plan"
 ```
 
 ---
@@ -7909,10 +7830,10 @@ in Global Constraints so no task drifts into them.
    screen §11 describes. Task 5's preamble. §15 scopes Slice 1's dashboard to login, list and
    detail, so Settings belongs with the channels that need it in Slice 2.
 
-**One question for the owner**, raised in Global Constraints and answered before Task 1 Step 1:
-whether vigil's `CONTRIBUTING.md` forbids a commit body and `Co-Authored-By` trailer, as the
-reference application's does, or requires the trailer as this session's harness does. Nothing
-else in the plan depends on the answer.
+**One question this plan originally left open** — whether vigil's `CONTRIBUTING.md` forbids a
+commit body and `Co-Authored-By` trailer — was settled on 2026-09-08 while designing
+`dev-kit`: it does, and that is now the shared rule across every project. Global Constraints
+states it, and Task 1 Step 8 writes it into `CONTRIBUTING.md`.
 
 **Placeholder scan.** No `TBD` or `TODO`. Four places name a decision the implementer makes from
 what they observe rather than from a guess, each with the observation that settles it: Ajv's

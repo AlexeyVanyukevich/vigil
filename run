@@ -75,24 +75,22 @@ scenario_dev() {
   export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
   export PORT="$APP_PORT"
 
+  # Task 12 adds the Vite half of this scenario, alongside the `web/` workspace it creates:
+  # a second background process on $WEB_PORT in the --bg branch, a second piped process in the
+  # foreground branch, and the `trap 'kill 0'` that takes the pair down together. Until then
+  # `./run dev` runs the API alone, because naming a workspace npm cannot find makes the whole
+  # scenario fail rather than start half of it.
   if [ "${1:-}" = "--bg" ]; then
     mkdir -p "$RUN_STATE"
     npm run --workspace server dev >"$RUN_STATE/server.log" 2>&1 & echo $! >"$RUN_STATE/server.pid"
-    npm run --workspace web dev -- --port "$WEB_PORT" >"$RUN_STATE/web.log" 2>&1 & echo $! >"$RUN_STATE/web.pid"
     ok "Running in the background"
-    note "http://localhost:${WEB_PORT}   logs: ${RUN_STATE}/*.log   stop: ./run stop"
+    note "http://localhost:${APP_PORT}   logs: ${RUN_STATE}/*.log   stop: ./run stop"
     return
   fi
 
-  ok "Server on :${APP_PORT}, dashboard on http://localhost:${WEB_PORT}"
-  note "Ctrl-C stops both"
-
-  # Either one dying takes the pair down — a half-running stack looks like a bug in the app
-  # rather than a stopped process.
-  trap 'kill 0' EXIT INT TERM
-  npm run --workspace server dev 2>&1 | sed "s/^/${DIM}[server]${OFF} /" &
-  npm run --workspace web dev -- --port "$WEB_PORT" 2>&1 | sed "s/^/${DIM}[web]   ${OFF} /" &
-  wait
+  ok "Server on :${APP_PORT}"
+  note "Ctrl-C stops it"
+  npm run --workspace server dev
 }
 
 scenario_start() {
@@ -138,8 +136,8 @@ scenario_test() {
   need_node; need_deps; need_docker
   step "Server suite (Testcontainers starts its own Postgres)"
   npm run --workspace server test
-  step "Client package suite (no server, no database)"
-  npm run --workspace client test
+  # Task 9 adds the client package suite here. Naming the workspace before Task 9 creates it
+  # makes `./run test` fail with "No workspaces found".
 }
 
 scenario_test_ui() {

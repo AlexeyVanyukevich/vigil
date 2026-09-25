@@ -15,9 +15,9 @@
   },
   "prettier": "dev-kit/prettier",
   "scripts": {
-    "test": "npm run --workspace server test && npm run --workspace client test",
+    "test": "npm run --workspace server test",
     "test:ui": "playwright test",
-    "build": "npm run --workspace server build && npm run --workspace web build",
+    "build": "npm run --workspace server build",
     "check": "./run check",
     "format": "prettier --write ."
   },

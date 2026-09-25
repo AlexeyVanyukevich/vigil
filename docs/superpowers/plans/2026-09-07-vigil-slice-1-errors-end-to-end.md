@@ -240,20 +240,39 @@ they are.** The result:
 }
 ```
 
-`tsconfig.json` — the existing file's `files: []` placeholder exists only because no source did.
-Source exists now, so it becomes a solution-style root that references the workspaces:
+**`tsconfig.json` needs no change.** Leave it exactly as it is, `files: []` and all. It
+type-checks nothing, which is correct: each workspace extends `dev-kit/tsconfig/node` or
+`/web` for itself, and the root has no runtime of its own to claim.
 
-```json
-{
-  "files": [],
-  "references": [{ "path": "./server" }, { "path": "./client" }, { "path": "./web" }]
+Project references were considered and rejected. They would require `composite: true` on every
+workspace, and `dev-kit/tsconfig/web` sets `noEmit: true` — a pairing TypeScript refuses. They
+would also force the root to name `./client` and `./web` before Tasks 9 and 12 create them,
+breaking the build from Task 1 until Task 12. Type-checking each workspace by name costs only
+incremental caching, which a repository this size does not need.
+
+Instead, `scenario_check` in `run` grows one line per workspace, added by the task that creates
+that workspace. After this task it reads:
+
+```bash
+scenario_check() {
+  need_node
+  need_deps
+
+  step "Checking formatting"
+  npx prettier --check .
+  ok "Formatting clean"
+
+  step "Type-checking"
+  ( cd server && npx tsc --noEmit )
+  ok "Types clean"
+
+  step "Tests"
+  npm run --workspace server test
 }
 ```
 
-The `extends` line goes away at the root: each workspace extends `dev-kit/tsconfig/node` or
-`dev-kit/tsconfig/web` for itself, and a root that also extended one would be claiming a runtime
-the repository does not have. Update `./run check` to `npx tsc -b` in the same step — `-p .` does
-not follow project references, so without it the root would type-check nothing and still pass.
+Task 9 adds `( cd client && npx tsc --noEmit )` and the client suite; Task 12 adds
+`( cd web && npx tsc --noEmit )`.
 
 **`.prettierignore` and `.gitignore` already exist**, copied from `dev-kit/ignore/`. Leave
 `.prettierignore` alone. Append to `.gitignore` only the two entries this slice introduces:
@@ -616,10 +635,8 @@ Then: `chmod +x run`
 {
   "extends": "dev-kit/tsconfig/node",
   "compilerOptions": {
-    "composite": true,
     "outDir": "dist",
-    "rootDir": ".",
-    "noEmit": false
+    "rootDir": "."
   },
   "include": ["src", "tests", "scripts"]
 }
@@ -4784,11 +4801,9 @@ watches is a liability the applications did not ask for; `fetch` and `node:` bui
 {
   "extends": "dev-kit/tsconfig/node",
   "compilerOptions": {
-    "composite": true,
     "outDir": "dist",
     "rootDir": "src",
-    "declaration": true,
-    "noEmit": false
+    "declaration": true
   },
   "include": ["src"]
 }
@@ -6306,10 +6321,7 @@ Overview, Monitors and Settings screens belong to Slices 2 and 3.
 ```json
 {
   "extends": "dev-kit/tsconfig/web",
-  "compilerOptions": {
-    "composite": true,
-    "types": ["vite/client"]
-  },
+  "compilerOptions": { "types": ["vite/client"] },
   "include": ["src", "vite.config.ts"]
 }
 ```

@@ -649,7 +649,9 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    globalSetup: ['./tests/integration/global-setup.ts'],
+    // No `globalSetup` yet. It names a file Task 2 creates, and vitest fails to start when the
+    // path does not resolve — which would leave `./run check` red at the end of this task.
+    // Task 2 adds the line in the same step that writes the file.
     include: ['tests/**/*.test.ts'],
     testTimeout: 30_000,
     hookTimeout: 120_000,
@@ -767,11 +769,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
 
 - [ ] **Step 7: Run the test to verify it passes**
 
-Run: `cd server && npx vitest run tests/unit/config.test.ts`
-Expected: PASS, 6 tests.
+Run: `./run check`
+Expected: formatting clean, types clean, 6 tests passing.
 
-The `vitest.config.ts` names a global setup that does not exist yet, so run the file directly
-here. Task 2 creates it and `./run check` starts working end to end.
+**`vitest.config.ts` must not name a `globalSetup` in this task.** The integration harness does
+not exist until Task 2, and a config pointing at a missing file makes vitest fail to start — so
+`./run check` would be red at the end of Task 1, which Global Constraints and
+`node_modules/dev-kit/rules/commits.md` both forbid. Task 2 adds the `globalSetup` line in the
+same step that creates the file it names.
 
 - [ ] **Step 8: Add the two conventions that are vigil's alone to `CLAUDE.md`**
 
@@ -812,6 +817,7 @@ git commit -m "build: add the workspaces, database service and validated config"
 - Create: `server/src/db/schema.ts`, `server/src/db/client.ts`, `server/src/db/migrate.ts`,
   `server/src/db/migrations/index.ts`, `server/src/db/migrations/001_initial.ts`
 - Create: `server/tests/integration/global-setup.ts`, `server/tests/integration/helpers.ts`
+- Modify: `server/vitest.config.ts` — add the `globalSetup` line Task 1 left out (Step 4)
 - Test: `server/tests/integration/migrations.test.ts`
 
 **Interfaces:**
@@ -1205,7 +1211,21 @@ describe('001_initial', () => {
 })
 ```
 
-- [ ] **Step 4: Write the test harness**
+- [ ] **Step 4: Write the test harness, and wire it into `vitest.config.ts`**
+
+**First, add the line Task 1 deliberately left out.** `server/vitest.config.ts` has no
+`globalSetup` because the file it would name did not exist; this step creates that file, so the
+line goes in now, replacing the three-line comment that explains its absence:
+
+```ts
+export default defineConfig({
+  test: {
+    globalSetup: ['./tests/integration/global-setup.ts'],
+    include: ['tests/**/*.test.ts'],
+```
+
+Without it every integration test in this slice runs against no database and fails on a
+connection error, which reads as a broken migration rather than a missing line.
 
 `server/tests/integration/global-setup.ts`:
 

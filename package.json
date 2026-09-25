@@ -1,0 +1,21 @@
+{
+  "name": "vigil",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Health monitoring for the applications running on one host",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "prettier": "dev-kit/prettier",
+  "scripts": {
+    "check": "./run check",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "dev-kit": "file:../dev-kit",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2"
+  }
+}

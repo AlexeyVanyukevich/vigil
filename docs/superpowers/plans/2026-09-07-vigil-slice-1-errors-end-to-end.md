@@ -43,7 +43,7 @@ whether or not a subagent inherits this project's memory files:
 | `{ error, message, details? }`, `additionalProperties: false` | `rules/http.md` |
 | `modules/<entity>/` split into four files | `rules/layout.md` |
 | Tests before implementation; real Postgres, never a mock | `rules/testing.md` |
-| Conventional Commits; the subject line is the whole message | `rules/commits.md` |
+| Conventional Commits; the subject line is the whole message; merge by rebase | `rules/commits.md` |
 | Specs are decision records; `architecture.md` is authoritative | `rules/documentation.md` |
 | Refer to projects by role, not by name | `rules/writing.md` |
 | What a session-ending review must show | `rules/review.md` |
@@ -96,6 +96,10 @@ incidents (Slice 3); retention pruning (Slice 4's neighbour, §14).
 
 **Before every commit:** `./run check` from the repository root. Commit format is
 `rules/commits.md`, above — the subject line is the whole message.
+
+**The slice is built on `feat/slice-1-errors-end-to-end`**, kept current by rebasing onto `main`,
+never by merging `main` in. Every commit on it lands on `main` as written, so each one must pass
+`./run check` on its own — none of them is tidied away by a squash at the end.
 
 **`dev-kit` is consumed as `file:../dev-kit`**, which is neither install form its README
 sanctions. It resolves to a symlink, so this repository type-checks against `dev-kit`'s working
@@ -7817,6 +7821,21 @@ changes themselves rather than describe them, and state three things beyond the 
 A passing `./run check` is not approval, and a review that reads as uniformly successful is a
 review that has been edited.
 
+- [ ] **Step 8: Merge by rebase, once the review is approved**
+
+```bash
+git fetch origin
+git rebase origin/main              # then ./run check again, against the rebased tree
+git push -u origin feat/slice-1-errors-end-to-end
+gh pr create --fill
+gh pr merge --rebase --delete-branch
+```
+
+`rules/commits.md` forbids the other two ways in. A squash folds the slice's commits into one
+with a subject that rule rejects, and a merge commit adds one. When
+superpowers:finishing-a-development-branch offers a local merge, decline it: the PR's rebase merge
+is the only route to `main`.
+
 ---
 
 ## Self-Review
@@ -7870,6 +7889,7 @@ What changed here, and why:
 | Every `need_env` call site became `need_env \|\| note "…"` | **A defect, not a tidy-up.** The library's `need_env` returns 1 when it creates `.env`, so a bare call under `set -euo pipefail` aborted the script on a fresh checkout — the first run by a new reader. |
 | Task 15 gained Step 7, the slice review | `dev-kit/rules/review.md` postdates this plan and binds the work. |
 | Global Constraints records the `file:../dev-kit` dependency | It is neither install form `dev-kit`'s README sanctions, so it needs to be a decision rather than an accident. |
+| The slice names its branch, and Task 15 gained Step 8, the rebase merge | `dev-kit/rules/commits.md` gained a merge rule on 2026-09-25. It forbids squash merges — the kind that landed this repository's first pull request as `Build/adopt dev kit (#1)` — and sets the branch form `<type>/<slug>`, which the slice branch was renamed to. |
 
 **Placeholder scan.** No `TBD` or `TODO`. Four places name a decision the implementer makes from
 what they observe rather than from a guess, each with the observation that settles it: Ajv's

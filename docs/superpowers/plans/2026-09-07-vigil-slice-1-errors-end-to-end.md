@@ -237,7 +237,6 @@ they are.** The result:
   "prettier": "dev-kit/prettier",
   "scripts": {
     "test": "npm run --workspace server test",
-    "test:ui": "playwright test",
     "build": "npm run --workspace server build",
     "check": "./run check",
     "format": "prettier --write ."
@@ -499,11 +498,9 @@ scenario_test() {
   # makes `./run test` fail with "No workspaces found".
 }
 
-scenario_test_ui() {
-  need_node; need_deps; need_docker
-  step "Browser journeys against the whole product"
-  npx playwright test
-}
+# No `scenario_test_ui` yet. `playwright test` needs `playwright.config.ts`, which Task 14
+# creates along with the journeys it runs; offering the scenario before then is offering a
+# command that fails. Task 14 adds this function, its usage line and its dispatch entry.
 
 scenario_migrate() {
   need_node; need_deps
@@ -562,13 +559,12 @@ usage() {
   cat <<TEXT
 ${BOLD}./run <scenario>${OFF}
 
-  ${BOLD}dev${OFF} [--bg]     Postgres, migrations, the server and Vite together
+  ${BOLD}dev${OFF} [--bg]     Postgres, migrations and the server
   ${BOLD}start${OFF} [--bg]   the built dashboard and API on one port
   ${BOLD}stop${OFF}           stop whatever ${BOLD}dev --bg${OFF} or ${BOLD}start --bg${OFF} left running
-  ${BOLD}test${OFF}           the server and client suites
-  ${BOLD}test:ui${OFF}        browser journeys against the whole product
-  ${BOLD}check${OFF}          types, formatting, and both suites
-  ${BOLD}build${OFF}          compile the server and build the dashboard
+  ${BOLD}test${OFF}           the server suite
+  ${BOLD}check${OFF}          types, formatting and tests
+  ${BOLD}build${OFF}          compile the server
   ${BOLD}migrate${OFF}        apply migrations to the local database
   ${BOLD}owner:password${OFF} set the owner's password (also signs every device out)
   ${BOLD}app:add${OFF}        register an application to be watched
@@ -586,7 +582,6 @@ case "$SCENARIO" in
   start)          scenario_start "$@" ;;
   stop)           scenario_stop ;;
   test)           scenario_test ;;
-  test:ui)        scenario_test_ui ;;
   check)          scenario_check ;;
   build)          scenario_build ;;
   migrate)        scenario_migrate ;;
@@ -7452,6 +7447,20 @@ by morning the owner knows what, how many times, and where.
 **Files:**
 - Create: `playwright.config.ts`
 - Create: `tests/ui/global-setup.ts`, `tests/ui/helpers.ts`, `tests/ui/issues.spec.ts`
+- Modify: `run` — this task creates `playwright.config.ts` and the journeys it runs, so it adds
+  every reference earlier tasks deferred (Global Constraints, "No task may leave a command
+  red"): the `scenario_test_ui` function, its `${BOLD}test:ui${OFF}` usage line, and its
+  `test:ui) scenario_test_ui ;;` dispatch entry
+
+  ```bash
+  scenario_test_ui() {
+    need_node; need_deps; need_docker
+    step "Browser journeys against the whole product"
+    npx playwright test
+  }
+  ```
+- Modify: root `package.json` — add `"test:ui": "playwright test"`. `@playwright/test` is
+  already a devDependency from Task 1; only the script is missing.
 
 **Interfaces:**
 - Consumes: the built product — `./run build`, the compose database, and the setup scripts from

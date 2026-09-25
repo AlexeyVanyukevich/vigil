@@ -1,0 +1,9 @@
+{
+  "extends": "dev-kit/tsconfig/node",
+  "compilerOptions": { "noEmit": true },
+
+  // No source exists yet. `files: []` keeps `tsc -p .` exiting 0 instead of failing TS18003,
+  // while still proving the extends chain resolves — a broken `extends` errors regardless.
+  // The first slice replaces this with `server/`, `web/` and `client/`.
+  "files": []
+}

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+
+# This script is what installs dependencies, so it cannot source out of node_modules before
+# that directory exists.
+[ -d node_modules ] || npm install
+source node_modules/dev-kit/sh/lib.sh
+
+usage() {
+  cat <<'TXT'
+Usage: ./run <scenario>
+
+  check   Verify formatting, then type-check the tree.
+
+TXT
+}
+
+scenario_check() {
+  need_node
+  need_deps
+
+  step "Checking formatting"
+  npx prettier --check .
+  ok "Formatting clean"
+
+  step "Type-checking"
+  npx tsc -p .
+  ok "Types clean"
+}
+
+case "${1:-}" in
+  check) scenario_check ;;
+  '' | -h | --help | help) usage ;;
+  *) die "Unknown scenario: $1" "Run ./run --help for the list." ;;
+esac

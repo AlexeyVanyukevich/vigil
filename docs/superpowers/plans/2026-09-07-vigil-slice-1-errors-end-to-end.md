@@ -97,6 +97,17 @@ incidents (Slice 3); retention pruning (Slice 4's neighbour, §14).
 **Before every commit:** `./run check` from the repository root. Commit format is
 `rules/commits.md`, above — the subject line is the whole message.
 
+**No task may leave a command red.** `client/` is created in Task 9 and `web/` in Task 12, so
+until then **nothing may name them** — not a `run` scenario, not a root `package.json` script,
+not a `vitest.config.ts` key, not a `tsconfig` reference. A file or workspace named before it
+exists is not a harmless forward declaration: npm fails with `No workspaces found`, vitest
+fails to start, and `tsc` fails to resolve. The task that creates a workspace adds every
+reference to it in the same commit.
+
+`./run check` does not catch this on its own, because it deliberately calls the server suite
+directly rather than going through `./run test`. **Before committing, run every scenario the
+task claims to provide** — at minimum `./run check` and `./run test`.
+
 **The slice is built on `feat/slice-1-errors-end-to-end`**, kept current by rebasing onto `main`,
 never by merging `main` in. Every commit on it lands on `main` as written, so each one must pass
 `./run check` on its own — none of them is tidied away by a squash at the end.
@@ -225,9 +236,9 @@ they are.** The result:
   "engines": { "node": ">=24.0.0" },
   "prettier": "dev-kit/prettier",
   "scripts": {
-    "test": "npm run --workspace server test && npm run --workspace client test",
+    "test": "npm run --workspace server test",
     "test:ui": "playwright test",
-    "build": "npm run --workspace server build && npm run --workspace web build",
+    "build": "npm run --workspace server build",
     "check": "./run check",
     "format": "prettier --write ."
   },
@@ -422,24 +433,23 @@ scenario_dev() {
   export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
   export PORT="$APP_PORT"
 
+  # Task 12 adds the Vite half of this scenario, alongside the `web/` workspace it creates:
+  # a second background process on $WEB_PORT in the --bg branch, a second piped process in the
+  # foreground branch, and the `trap 'kill 0'` that takes the pair down together. Until then
+  # `./run dev` runs the API alone, because naming a workspace npm cannot find makes the whole
+  # scenario fail rather than start half of it.
+
   if [ "${1:-}" = "--bg" ]; then
     mkdir -p "$RUN_STATE"
     npm run --workspace server dev >"$RUN_STATE/server.log" 2>&1 & echo $! >"$RUN_STATE/server.pid"
-    npm run --workspace web dev -- --port "$WEB_PORT" >"$RUN_STATE/web.log" 2>&1 & echo $! >"$RUN_STATE/web.pid"
     ok "Running in the background"
-    note "http://localhost:${WEB_PORT}   logs: ${RUN_STATE}/*.log   stop: ./run stop"
+    note "http://localhost:${APP_PORT}   logs: ${RUN_STATE}/*.log   stop: ./run stop"
     return
   fi
 
-  ok "Server on :${APP_PORT}, dashboard on http://localhost:${WEB_PORT}"
-  note "Ctrl-C stops both"
-
-  # Either one dying takes the pair down — a half-running stack looks like a bug in the app
-  # rather than a stopped process.
-  trap 'kill 0' EXIT INT TERM
-  npm run --workspace server dev 2>&1 | sed "s/^/${DIM}[server]${OFF} /" &
-  npm run --workspace web dev -- --port "$WEB_PORT" 2>&1 | sed "s/^/${DIM}[web]   ${OFF} /" &
-  wait
+  ok "Server on :${APP_PORT}"
+  note "Ctrl-C stops it"
+  npm run --workspace server dev
 }
 
 scenario_start() {
@@ -485,8 +495,8 @@ scenario_test() {
   need_node; need_deps; need_docker
   step "Server suite (Testcontainers starts its own Postgres)"
   npm run --workspace server test
-  step "Client package suite (no server, no database)"
-  npm run --workspace client test
+  # Task 9 adds the client package suite here. Naming the workspace before Task 9 creates it
+  # makes `./run test` fail with "No workspaces found".
 }
 
 scenario_test_ui() {
@@ -533,12 +543,11 @@ scenario_check() {
   need_node; need_deps
   step "Types"
   ( cd server && npx tsc --noEmit )
-  ( cd client && npx tsc --noEmit )
-  ( cd web && npx tsc --noEmit )
+  # Task 9 adds client, Task 12 adds web.
   step "Formatting"
   npx prettier --check .
   step "Tests"
-  scenario_test
+  npm run --workspace server test
   ok "Everything is clean"
 }
 
@@ -4773,6 +4782,11 @@ Its tests run with no server and no database.
 **Files:**
 - Create: `client/package.json`, `client/tsconfig.json`, `client/vitest.config.ts`
 - Create: `client/src/redact.ts`, `client/src/payload.ts`
+- Modify: `run` — this task creates the `client/` workspace, so it adds every reference to it
+  that earlier tasks deferred (Global Constraints, "No task may leave a command red"):
+  `( cd client && npx tsc --noEmit )` in `scenario_check`, and
+  `npm run --workspace client test` in `scenario_test`
+- Modify: root `package.json` — append `&& npm run --workspace client test` to `test`
 - Test: `client/tests/redact.test.ts`, `client/tests/payload.test.ts`
 
 **Interfaces:**
@@ -6291,6 +6305,13 @@ git commit -m "feat(client): add the node entry point and prove it against the e
 Overview, Monitors and Settings screens belong to Slices 2 and 3.
 
 **Files:**
+- Modify: `run` — this task creates the `web/` workspace, so it adds every reference to it that
+  earlier tasks deferred (Global Constraints, "No task may leave a command red"):
+  `( cd web && npx tsc --noEmit )` in `scenario_check`, and the Vite half of `scenario_dev` —
+  a second background process on `$WEB_PORT` in the `--bg` branch, a second piped process in
+  the foreground branch, and the `trap 'kill 0' EXIT INT TERM` that takes the pair down
+  together so a half-running stack cannot look like a bug in the app
+- Modify: root `package.json` — append `&& npm run --workspace web build` to `build`
 - Create: `web/package.json`, `web/tsconfig.json`, `web/vite.config.ts`, `web/index.html`
 - Create: `web/src/main.tsx`, `web/src/App.tsx`, `web/src/api.ts`, `web/src/errors.ts`,
   `web/src/styles.css`, `web/src/routes/Login.tsx`

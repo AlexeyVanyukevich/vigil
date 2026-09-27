@@ -30,10 +30,14 @@ export class AuthService {
   constructor(
     private readonly db: Kysely<Database>,
     private readonly ttlDays: number,
+    // Injected so the once-an-hour slide below can be tested at the boundary without sleeping
+    // an hour of real time. Defaults to the real clock, so the one production caller needs no
+    // change.
+    private readonly now: () => number = Date.now,
   ) {}
 
   private expiryFromNow(): Date {
-    return new Date(Date.now() + this.ttlDays * 24 * HOUR_MS)
+    return new Date(this.now() + this.ttlDays * 24 * HOUR_MS)
   }
 
   /** The token, or undefined when the password does not match — including when none is set. */
@@ -57,7 +61,7 @@ export class AuthService {
 
     // Slid at most once an hour rather than on every request: a write on every read turns a
     // read-only screen into write traffic.
-    if (Date.now() - session.lastSeenAt.getTime() > HOUR_MS) {
+    if (this.now() - session.lastSeenAt.getTime() > HOUR_MS) {
       await slideSession(this.db, session.id, this.expiryFromNow())
     }
     return session

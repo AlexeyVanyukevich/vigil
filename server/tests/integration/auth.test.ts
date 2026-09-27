@@ -3,6 +3,8 @@ import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
 import { PASSWORD } from './auth-helper.js'
 import { hashPassword } from '../../src/modules/auth/password.js'
+import { AuthService } from '../../src/modules/auth/auth.service.js'
+import { hashToken, insertSession, mintToken } from '../../src/modules/auth/session.repository.js'
 
 let app: FastifyInstance
 
@@ -176,5 +178,70 @@ describe('the origin check', () => {
       payload: {},
     })
     expect(response.statusCode).not.toBe(403)
+  })
+})
+
+describe('the session slide', () => {
+  const TTL_DAYS = 30
+  const HOUR_MS = 3_600_000
+
+  /** A session whose `last_seen_at` is the real wall-clock time, as `insertSession` leaves it. */
+  async function seedSession(): Promise<{ token: string; expiresAt: Date }> {
+    const owner = await getTestDb().selectFrom('owners').select('id').executeTakeFirstOrThrow()
+    const token = mintToken()
+    const expiresAt = new Date(Date.now() + TTL_DAYS * 24 * HOUR_MS)
+    await insertSession(getTestDb(), owner.id, token, expiresAt)
+    return { token, expiresAt }
+  }
+
+  async function sessionRow(token: string) {
+    return getTestDb()
+      .selectFrom('sessions')
+      .select(['expires_at', 'last_seen_at'])
+      .where('token_hash', '=', hashToken(token))
+      .executeTakeFirstOrThrow()
+  }
+
+  it('does not move last_seen_at or expires_at within the hour', async () => {
+    const { token, expiresAt } = await seedSession()
+    const before = await sessionRow(token)
+
+    // 30 minutes past the seeded last_seen_at: inside the once-an-hour window.
+    const clock = () => Date.now() + 30 * 60_000
+    await new AuthService(getTestDb(), TTL_DAYS, clock).resolve(token)
+
+    const after = await sessionRow(token)
+    expect(new Date(after.last_seen_at).getTime()).toBe(new Date(before.last_seen_at).getTime())
+    expect(new Date(after.expires_at).getTime()).toBe(expiresAt.getTime())
+  })
+
+  it('moves both after the hour', async () => {
+    const { token } = await seedSession()
+    const before = await sessionRow(token)
+
+    // 61 minutes past the seeded last_seen_at: just outside the window.
+    const clockMs = Date.now() + 61 * 60_000
+    await new AuthService(getTestDb(), TTL_DAYS, () => clockMs).resolve(token)
+
+    const after = await sessionRow(token)
+    expect(new Date(after.last_seen_at).getTime()).toBeGreaterThan(
+      new Date(before.last_seen_at).getTime(),
+    )
+    expect(new Date(after.expires_at).getTime()).toBe(clockMs + TTL_DAYS * 24 * HOUR_MS)
+  })
+
+  it('slides expires_at to now plus the TTL, not the old expiry plus the TTL again', async () => {
+    const { token, expiresAt: originalExpiry } = await seedSession()
+
+    // Far enough past the original expiry that reapplying the TTL to *it*, rather than to now,
+    // would land on a visibly different timestamp — the two formulas cannot coincide by luck.
+    const clockMs = originalExpiry.getTime() + 10 * HOUR_MS
+    await new AuthService(getTestDb(), TTL_DAYS, () => clockMs).resolve(token)
+
+    const after = await sessionRow(token)
+    expect(new Date(after.expires_at).getTime()).toBe(clockMs + TTL_DAYS * 24 * HOUR_MS)
+    expect(new Date(after.expires_at).getTime()).not.toBe(
+      originalExpiry.getTime() + TTL_DAYS * 24 * HOUR_MS,
+    )
   })
 })

@@ -107,10 +107,19 @@ describe('normalizeMessage', () => {
     expect(normalizeMessage(message)).toBe(expected)
   })
 
-  // Not a fixed expected string — the point is that two ids collapse to the same normalized
-  // form, whatever placeholder text is used for a number.
-  it('makes two messages differing only by an id into one', () => {
-    expect(normalizeMessage('user 123 not found')).toBe(normalizeMessage('user 456 not found'))
+  // Not a fixed expected string — the point is that two inputs collapse to the same normalized
+  // form, whatever placeholder text is used. Tabulated like the fingerprint relation cases below
+  // rather than as a one-off `it`, since extending this coverage means adding a row.
+  const COLLAPSE_CASES: { name: string; a: string; b: string }[] = [
+    {
+      name: 'makes two messages differing only by an id into one',
+      a: 'user 123 not found',
+      b: 'user 456 not found',
+    },
+  ]
+
+  it.each(COLLAPSE_CASES)('$name', ({ a, b }) => {
+    expect(normalizeMessage(a)).toBe(normalizeMessage(b))
   })
 })
 
@@ -217,6 +226,15 @@ describe('fingerprintOf', () => {
       name: 'cannot be made to collide with a computed fingerprint',
       a: { type: 'Error', message: 'x', fingerprint: 'Error\nx' },
       b: { type: 'Error', message: 'x' },
+      relation: 'different',
+    },
+    {
+      // The mirror image of the case above: a `type` crafted to read as the *other* path's
+      // domain tag must not collide with an explicit fingerprint carrying the value that tag
+      // would otherwise introduce. Both `type` and `fingerprint` come from the wire.
+      name: 'a type crafted to look like the explicit domain tag does not collide with it',
+      a: { type: 'Error', message: 'm', fingerprint: 'abc' },
+      b: { type: 'explicit', message: 'abc' },
       relation: 'different',
     },
     {

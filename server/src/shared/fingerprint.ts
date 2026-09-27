@@ -105,8 +105,12 @@ export function fingerprintOf(input: FingerprintInput): Fingerprinted {
 
   const explicit = input.fingerprint?.trim()
   if (explicit !== undefined && explicit !== '') {
-    // Domain-separated, so caller-chosen text cannot be crafted to equal a computed body.
-    return { fingerprint: sha256(`explicit\n${explicit}`), culprit }
+    // Tagged with a literal `'explicit'` first element that the computed path's `'computed'`
+    // tag can never produce: JSON.stringify encodes the tag as the array's first quoted
+    // element, so the two arrays diverge in their first bytes no matter what `explicit`,
+    // `type` or `body` contain. A text prefix cannot promise that — `type` is wire-controlled,
+    // and `${type}\n${body}` can be made to start with the same bytes as `explicit\n${value}`.
+    return { fingerprint: sha256(JSON.stringify(['explicit', explicit])), culprit }
   }
 
   // Vendor frames are skipped so a dependency upgrade does not split every issue in the
@@ -118,5 +122,5 @@ export function fingerprintOf(input: FingerprintInput): Fingerprinted {
       ? chosen.map((frame) => `${frame.fn}@${frame.module}`).join('\n')
       : normalizeMessage(input.message)
 
-  return { fingerprint: sha256(`${input.type}\n${body}`), culprit }
+  return { fingerprint: sha256(JSON.stringify(['computed', input.type, body])), culprit }
 }

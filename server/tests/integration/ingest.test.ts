@@ -315,20 +315,28 @@ describe('regression', () => {
 })
 
 describe('the hard caps', () => {
-  // Fastify's own default `bodyLimit` (1 MiB) is a fourth, unstated cap: 100 events at the
-  // 16 KB stack limit alone is already ~1.6 MB. A batch that is inside every §6 cap must still
-  // get through, so the route's `bodyLimit` has to be sized from those caps, not left default.
-  it('accepts a batch sitting at every cap at once', async () => {
-    const events = Array.from({ length: 100 }, (_, i) => ({
-      type: 'Error',
-      // Just under the 16 KB / 8 KB byte caps `guardBytes` enforces.
-      stack: 'x'.repeat(16_000),
-      message: 'm'.repeat(4_000),
-      context: { blob: 'y'.repeat(7_900) },
+  // Fastify's own default `bodyLimit` (1 MiB) is a fourth, unstated cap. Pins the derivation in
+  // `ingest.body-limit.ts`, not just "some generous number": every field that can drive up the
+  // *wire* size is built at its real cap out of the character that is worst-case for it. `stack`,
+  // `message`, `type`, `fingerprint` and `environment` are all guarded against their *decoded*
+  // size, and JSON.stringify writes a control character (one decoded byte/unit) as the six-byte
+  // `\u00xx` escape — a control character at the cap, not an ordinary ASCII one, is what actually
+  // stresses the limit. A weaker escape factor than 6 here would answer 413, not 202.
+  it('accepts a batch at every cap, built from the worst-case escaping character', async () => {
+    const worstCase = '\u0001'
+    const stack = worstCase.repeat(16_000) // under the 16,384-byte guardBytes cap
+    const message = worstCase.repeat(4_000) // at MAX_MESSAGE_LENGTH
+    const type = worstCase.repeat(200) // at MAX_TYPE_LENGTH — still matches NonBlankString's \S
+    const fingerprint = worstCase.repeat(200) // at MAX_FINGERPRINT_LENGTH
+
+    const events = Array.from({ length: 100 }, () => ({
+      type,
+      message,
+      stack,
       occurred_at: new Date().toISOString(),
-      fingerprint: `cap-${i}`,
+      fingerprint,
     }))
-    const response = await post(batch({ events }))
+    const response = await post(batch({ environment: worstCase.repeat(64), events }))
     expect(response.statusCode).toBe(202)
     expect(response.json()).toEqual({ accepted: 100 })
   })

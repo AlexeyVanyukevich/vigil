@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
 import { insertApp } from '../../src/modules/apps/app.repository.js'
 import { insertKey, mintIngestKey } from '../../src/modules/ingest/key.repository.js'
-import { IngestService } from '../../src/modules/ingest/ingest.service.js'
+import { IngestService, type RecordedIssue } from '../../src/modules/ingest/ingest.service.js'
 import type { IngestBodyType } from '../../src/modules/ingest/ingest.schemas.js'
 
 let app: FastifyInstance
@@ -493,12 +493,41 @@ describe('concurrency', () => {
     await db().updateTable('issues').set({ status: 'resolved' }).execute()
 
     const N = 8
-    const results = await Promise.all(
-      Array.from({ length: N }, () => service.record(appId, validBatch())),
-    )
+
+    // A local, low-latency Postgres gives the N calls nothing to actually contend over: without
+    // forcing it, each `service.record()` call runs start-to-finish before the next one even
+    // issues its first query, and the row lock this test exists to prove correct is never
+    // touched by more than one transaction at a time — it would pass whether or not `.forUpdate()`
+    // were even there. Holding the row's lock from a separate transaction, starting all N calls
+    // so they queue behind it, and only then releasing it guarantees they really do overlap.
+    const holder = await db().startTransaction().execute()
+    let results: RecordedIssue[][]
+    try {
+      await holder
+        .selectFrom('issues')
+        .select('id')
+        .where('app_id', '=', appId)
+        .forUpdate()
+        .executeTakeFirstOrThrow()
+
+      const pending = Promise.all(
+        Array.from({ length: N }, () => service.record(appId, validBatch())),
+      )
+
+      // Time for all N calls to reach `.forUpdate()` and queue behind `holder` — without it,
+      // `commit()` could run before some of them have issued a query at all.
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      await holder.commit().execute()
+
+      results = await pending
+    } catch (error) {
+      await holder.rollback().execute()
+      throw error
+    }
 
     // Only whichever of the N transactions is the first to lock the row finds it `resolved`;
-    // every other one, once it gets the lock, finds the first's `open` already committed.
+    // every other one, once it gets the lock (once `holder` has released it), finds the
+    // first's `open` already committed.
     const regressedCount = results.flat().filter((r) => r.regressed).length
     expect(regressedCount).toBe(1)
 

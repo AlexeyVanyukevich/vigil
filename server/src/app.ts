@@ -69,10 +69,28 @@ async function registerSpa(app: FastifyInstance): Promise<void> {
   }
 
   app.setNotFoundHandler((request, reply) => {
-    const isApi = request.url.startsWith('/api/') || request.url.startsWith('/ingest/')
-    if (isApi || root === undefined) {
+    if (isApiOrIngestPath(request.url) || root === undefined) {
       return reply.status(404).send({ error: 'not_found', message: 'Route not found' })
     }
     return reply.sendFile('index.html')
   })
+}
+
+/**
+ * A request that matched no route has no `routeOptions.url` to read, so the not-found handler
+ * cannot lean on the matched-route trick `guard.ts` uses against percent-encoding — there is no
+ * matched route. Decoding by hand instead: `/%61pi/nothing` must still get the API's JSON 404,
+ * not the SPA's `index.html`, for the same reason a raw-url comparison is wrong in the guard.
+ */
+export function isApiOrIngestPath(rawUrl: string): boolean {
+  const path = rawUrl.split('?')[0] ?? rawUrl
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(path)
+  } catch {
+    // An invalid escape sequence decodes to nothing sensible; treat it as the literal path
+    // rather than fail the request over a malformed query string.
+    decoded = path
+  }
+  return decoded.startsWith('/api/') || decoded.startsWith('/ingest/')
 }

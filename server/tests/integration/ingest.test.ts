@@ -315,6 +315,24 @@ describe('regression', () => {
 })
 
 describe('the hard caps', () => {
+  // Fastify's own default `bodyLimit` (1 MiB) is a fourth, unstated cap: 100 events at the
+  // 16 KB stack limit alone is already ~1.6 MB. A batch that is inside every §6 cap must still
+  // get through, so the route's `bodyLimit` has to be sized from those caps, not left default.
+  it('accepts a batch sitting at every cap at once', async () => {
+    const events = Array.from({ length: 100 }, (_, i) => ({
+      type: 'Error',
+      // Just under the 16 KB / 8 KB byte caps `guardBytes` enforces.
+      stack: 'x'.repeat(16_000),
+      message: 'm'.repeat(4_000),
+      context: { blob: 'y'.repeat(7_900) },
+      occurred_at: new Date().toISOString(),
+      fingerprint: `cap-${i}`,
+    }))
+    const response = await post(batch({ events }))
+    expect(response.statusCode).toBe(202)
+    expect(response.json()).toEqual({ accepted: 100 })
+  })
+
   it('refuses a batch over the event limit', async () => {
     const capped = await buildTestApp({ config: { maxEventsPerBatch: 2 } })
     try {

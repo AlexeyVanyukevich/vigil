@@ -4,6 +4,7 @@ import { UnauthorizedError } from '../auth/guard.js'
 import { findLiveKey, touchKey, type LiveKey } from './key.repository.js'
 import { IngestBody } from './ingest.schemas.js'
 import { IngestService } from './ingest.service.js'
+import { ingestBodyLimit } from './ingest.body-limit.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -29,6 +30,9 @@ export function registerIngest(instance: FastifyInstance): void {
   app.post(
     '/ingest/events',
     {
+      // Derived from the batch caps rather than left at Fastify's 1 MiB default, which refuses
+      // a batch that is inside every §6 cap on its own terms. See ingest.body-limit.ts.
+      bodyLimit: ingestBodyLimit(app.config),
       schema: { body: IngestBody(app.config.maxEventsPerBatch) },
       // A route-level hook, not a global one filtered by url: it runs only for a request
       // already matched to *this* route, so it needs no url-prefix check and no `is404`

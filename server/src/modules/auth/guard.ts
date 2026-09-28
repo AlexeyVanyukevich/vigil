@@ -21,6 +21,15 @@ declare module 'fastify' {
   }
 }
 
+/**
+ * `startsWith('/api/')` alone misses the exact route `/api` (no trailing slash) — nothing
+ * registers one today, but a plugin that mounted at that exact prefix would silently skip both
+ * guard hooks below. Cheap to close now, before anything relies on the gap.
+ */
+export function isApiRoute(matchedUrl: string | undefined): boolean {
+  return matchedUrl === '/api' || matchedUrl?.startsWith('/api/') === true
+}
+
 export function registerGuard(app: FastifyInstance, service: AuthService): void {
   app.decorateRequest('sessionId', '')
 
@@ -38,12 +47,23 @@ export function registerGuard(app: FastifyInstance, service: AuthService): void 
   // `routeOptions.url` is `undefined` when nothing matched (`request.is404`), so an unrouted
   // path is naturally skipped without a separate check.
   app.addHook('onRequest', async (request) => {
-    if (request.routeOptions.url?.startsWith('/api/') !== true) return
+    if (!isApiRoute(request.routeOptions.url)) return
     if (request.method === 'GET' || request.method === 'HEAD') return
     const origin = request.headers.origin
     if (origin === undefined) return
     const host = request.headers.host
-    if (host === undefined || new URL(origin).host !== host) {
+
+    // An `Origin` the `URL` constructor cannot parse — the literal `null` a browser sends for an
+    // opaque origin, for instance — is not one that can be shown to match `host`; treated as
+    // foreign rather than left to throw and turn a forged request into a 500.
+    let originHost: string | undefined
+    try {
+      originHost = new URL(origin).host
+    } catch {
+      originHost = undefined
+    }
+
+    if (host === undefined || originHost === undefined || originHost !== host) {
       throw new ForbiddenOriginError('This request did not come from the dashboard')
     }
   })
@@ -51,7 +71,7 @@ export function registerGuard(app: FastifyInstance, service: AuthService): void 
   app.addHook('onRequest', async (request) => {
     // Only the API is guarded. The SPA's own HTML and bundle must load without a session — the
     // page is what shows the login form — and `/ingest/*` authenticates with a key instead.
-    if (request.routeOptions.url?.startsWith('/api/') !== true) return
+    if (!isApiRoute(request.routeOptions.url)) return
     if (request.routeOptions.config?.public === true) return
 
     const token = request.cookies.session

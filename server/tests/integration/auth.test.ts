@@ -190,6 +190,20 @@ describe('the origin check', () => {
     })
     expect(response.statusCode).not.toBe(403)
   })
+
+  // A browser sends the literal header value `null` for an opaque origin (a sandboxed iframe, a
+  // redirect from a data: URL, ...). `new URL('null')` throws, and an unhandled throw here would
+  // answer 500 instead of refusing the request outright.
+  it('refuses an origin the URL constructor cannot parse, rather than erroring', async () => {
+    const cookies = await sessionCookie()
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/logout',
+      cookies,
+      headers: { origin: 'null', host: 'vigil.example' },
+    })
+    expect(response.statusCode).toBe(403)
+  })
 })
 
 describe('the session slide', () => {

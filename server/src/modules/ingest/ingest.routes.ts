@@ -7,7 +7,7 @@ import { IngestService } from './ingest.service.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
-    /** Set by the `preValidation` hook below once the key has been resolved. */
+    /** Set by this route's own `onRequest` hook once the key has been resolved. */
     ingestKey?: LiveKey
   }
 }
@@ -26,35 +26,37 @@ export function registerIngest(instance: FastifyInstance): void {
 
   app.decorateRequest('ingestKey', undefined)
 
-  // In `preValidation` rather than in the handler: Fastify checks the body schema before a
-  // handler ever runs, and a caller with no key must not learn the shape of the payload it
-  // rejects with a 400 before it has even proven it may write here. The key check is the trust
-  // boundary and must win.
-  app.addHook('preValidation', async (request) => {
-    // Fastify folds every hook registered on this instance into the 404 context too, so without
-    // this check a POST to a path under `/ingest/` that was never routed would answer 401
-    // instead of 404 — a route's existence must not depend on whether the caller holds a key.
-    if (!request.url.startsWith('/ingest/') || request.is404) return
-
-    // Only from the header. Never a query string, never a body field: an application
-    // identifier the sender controls is an application identifier an attacker controls.
-    const header = request.headers.authorization
-    const token = header?.startsWith('Bearer ') === true ? header.slice(7).trim() : undefined
-    if (token === undefined || token === '')
-      throw new UnauthorizedError('An ingest key is required')
-
-    const key = await findLiveKey(app.db, token)
-    if (key === undefined) throw new UnauthorizedError('This ingest key is not valid')
-
-    request.ingestKey = key
-  })
-
   app.post(
     '/ingest/events',
-    { schema: { body: IngestBody(app.config.maxEventsPerBatch) } },
+    {
+      schema: { body: IngestBody(app.config.maxEventsPerBatch) },
+      // A route-level hook, not a global one filtered by url: it runs only for a request
+      // already matched to *this* route, so it needs no url-prefix check and no `is404`
+      // bail-out. And `onRequest`, not `preValidation`: this check needs only the headers, and
+      // running it any later would have a keyless caller pay for a body parse — and risk a
+      // 400/413/415 from the schema or the size limit — before ever reaching the 401 that
+      // should have ended the request first.
+      onRequest: async (request) => {
+        // Only from the header. Never a query string, never a body field: an application
+        // identifier the sender controls is an application identifier an attacker controls.
+        const header = request.headers.authorization
+        const token = header?.startsWith('Bearer ') === true ? header.slice(7).trim() : undefined
+        if (token === undefined || token === '') {
+          throw new UnauthorizedError('An ingest key is required')
+        }
+
+        const key = await findLiveKey(app.db, token)
+        if (key === undefined) throw new UnauthorizedError('This ingest key is not valid')
+
+        request.ingestKey = key
+      },
+    },
     async (request, reply) => {
-      // Set by the hook above, which runs on every request to this path before the handler.
-      const key = request.ingestKey!
+      // Set by the `onRequest` hook above; the explicit check (rather than a `!` assertion)
+      // keeps this handler correct even if the hook above it is ever changed to skip resolving
+      // a key under some condition.
+      const key = request.ingestKey
+      if (key === undefined) throw new UnauthorizedError('An ingest key is required')
 
       // Slice 4 puts the browser policy — origin allowlist, rate limit, quota, extension
       // filtering — behind `key.kind === 'browser'` here. Slice 1 issues only server keys.

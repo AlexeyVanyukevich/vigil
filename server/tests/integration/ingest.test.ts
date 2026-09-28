@@ -126,6 +126,27 @@ describe('the key', () => {
     expect(mine?.last_used_at).not.toBeNull()
     expect(theirs?.last_used_at).toBeNull()
   })
+
+  // The key check must run before Fastify validates the body against the schema — a caller who
+  // has proven nothing about who they are must not learn anything about the shape it expects,
+  // and must not be answered with the wrong error code depending on which came first.
+  it('wins over a body-shape complaint when no key is presented at all', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/%69ngest/events',
+      payload: { not: 'a valid batch' },
+    })
+    expect(response.statusCode).toBe(401)
+  })
+
+  it('wins over the handler when no key is presented, even with a valid body', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/%69ngest/events',
+      payload: batch(),
+    })
+    expect(response.statusCode).toBe(401)
+  })
 })
 
 describe('storing a batch', () => {

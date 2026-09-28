@@ -45,10 +45,41 @@ export class IngestService {
       }
     }
 
+    // Fingerprinted up front, and then processed in fingerprint order rather than the batch's
+    // own order. `app_id` and `environment` are fixed for the whole batch, so fingerprint is the
+    // only thing that decides which `issues` row an event locks — two processes racing the same
+    // app with the same errors listed in different orders would otherwise lock those rows in
+    // opposite orders, and Postgres would abort one of them with a 40P01 deadlock rather than
+    // let it wait forever. A fixed, deterministic order removes the cycle entirely: every
+    // transaction that touches both rows reaches for the alphabetically-first one first.
+    const withFingerprint = body.events.map((event, index) => ({
+      index,
+      event,
+      ...fingerprintOf({
+        type: event.type,
+        message: event.message,
+        stack: event.stack,
+        fingerprint: event.fingerprint,
+      }),
+    }))
+    const inLockOrder = [...withFingerprint].sort((a, b) =>
+      a.fingerprint < b.fingerprint ? -1 : a.fingerprint > b.fingerprint ? 1 : 0,
+    )
+
     return this.db.transaction().execute(async (trx) => {
+      // Filled out of order (by lock order) but returned in the batch's own order: nothing about
+      // the client-visible contract — one `RecordedIssue` per submitted event, same positions —
+      // should depend on an internal choice made only to avoid a deadlock.
       const recorded: RecordedIssue[] = []
-      for (const event of body.events) {
-        recorded.push(await this.recordOne(trx, appId, body, event))
+      for (const item of inLockOrder) {
+        recorded[item.index] = await this.recordOne(
+          trx,
+          appId,
+          body,
+          item.event,
+          item.fingerprint,
+          item.culprit,
+        )
       }
       return recorded
     })
@@ -59,14 +90,9 @@ export class IngestService {
     appId: string,
     body: IngestBodyType,
     event: IngestBodyType['events'][number],
+    fingerprint: string,
+    culprit: string | null,
   ): Promise<RecordedIssue> {
-    const { fingerprint, culprit } = fingerprintOf({
-      type: event.type,
-      message: event.message,
-      stack: event.stack,
-      fingerprint: event.fingerprint,
-    })
-
     const occurredAt = new Date(event.occurred_at)
     const count = event.count ?? 1
     const title = event.message === '' ? event.type : `${event.type}: ${event.message}`

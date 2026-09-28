@@ -446,3 +446,51 @@ describe('the wire format', () => {
     expect(await db().selectFrom('issues').selectAll().execute()).toHaveLength(1)
   })
 })
+
+describe('concurrency', () => {
+  // The upsert takes a row lock (`SELECT ... FOR UPDATE`) per event, in whatever order the
+  // batch lists them. Two processes reporting the same two issues in opposite orders each hold
+  // one lock and wait on the other's — a textbook deadlock, and Postgres resolves one by
+  // aborting it with 40P01 rather than letting either wait forever. That failure must not reach
+  // the client as a lost batch.
+  it('does not deadlock when two concurrent batches list the same two issues in opposite order', async () => {
+    const eventA = {
+      type: 'Error',
+      message: 'a',
+      occurred_at: new Date().toISOString(),
+      fingerprint: 'deadlock-a',
+    }
+    const eventB = {
+      type: 'Error',
+      message: 'b',
+      occurred_at: new Date().toISOString(),
+      fingerprint: 'deadlock-b',
+    }
+
+    // Both issues must already exist before the race: a deadlock needs two transactions each
+    // already holding one row's lock and blocking on the other's, which only happens on the
+    // *update* path — inserting a brand-new fingerprint never contends for another
+    // transaction's row.
+    await post(batch({ events: [eventA] }))
+    await post(batch({ events: [eventB] }))
+
+    // Padding between the two contested events with real (but uncontended — distinct
+    // fingerprints per side) DB round trips, so both transactions have already taken their own
+    // first lock before either reaches for the other's — without it, one batch can finish and
+    // commit before the second has even started, and the two never actually overlap.
+    const padding = (prefix: string) =>
+      Array.from({ length: 15 }, (_, i) => ({
+        type: 'Error',
+        message: `padding ${i}`,
+        occurred_at: new Date().toISOString(),
+        fingerprint: `${prefix}-${i}`,
+      }))
+
+    const batchAB = batch({ events: [eventA, ...padding('ab'), eventB] })
+    const batchBA = batch({ events: [eventB, ...padding('ba'), eventA] })
+
+    const [resAB, resBA] = await Promise.all([post(batchAB), post(batchBA)])
+    expect(resAB.statusCode).toBe(202)
+    expect(resBA.statusCode).toBe(202)
+  })
+})

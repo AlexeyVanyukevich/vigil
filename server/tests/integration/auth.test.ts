@@ -136,8 +136,9 @@ describe('the guard', () => {
   // cookie, and the guard must not be what stands between it and the ingest endpoint.
   it('does not ask /ingest for a session — it answers on its own terms', async () => {
     const response = await app.inject({ method: 'POST', url: '/ingest/events', payload: {} })
-    expect(response.statusCode).not.toBe(401)
-    expect(response.statusCode).toBe(404)
+    // 401 from the key check, not from the cookie guard; the body says which.
+    expect(response.statusCode).toBe(401)
+    expect(response.json().message).toMatch(/ingest key/)
   })
 
   it('answers an unknown /api route with JSON rather than a page', async () => {

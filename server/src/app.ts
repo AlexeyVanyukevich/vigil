@@ -8,6 +8,7 @@ import type { Config } from './config.js'
 import type { Database } from './db/schema.js'
 import { registerErrorHandler } from './shared/errors.js'
 import { registerAuth } from './modules/auth/auth.routes.js'
+import { registerIngest } from './modules/ingest/ingest.routes.js'
 
 export interface AppDeps {
   config: Config
@@ -39,6 +40,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get('/api/health', { config: { public: true } }, async () => ({ status: 'ok' }))
 
   await registerAuth(app)
+  registerIngest(app)
 
   await registerSpa(app)
 

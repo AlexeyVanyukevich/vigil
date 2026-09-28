@@ -3,6 +3,8 @@ import type { FastifyInstance } from 'fastify'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
 import { insertApp } from '../../src/modules/apps/app.repository.js'
 import { insertKey, mintIngestKey } from '../../src/modules/ingest/key.repository.js'
+import { IngestService } from '../../src/modules/ingest/ingest.service.js'
+import type { IngestBodyType } from '../../src/modules/ingest/ingest.schemas.js'
 
 let app: FastifyInstance
 let appId: string
@@ -53,6 +55,11 @@ function batch(overrides: Record<string, unknown> = {}): BatchInput {
     ...overrides,
   }
 }
+
+// `batch()` widened back to the strict wire type, for the concurrency tests that call
+// `IngestService` directly and so skip Fastify's schema validation — they must hand it
+// something already valid, which every default (unoverridden) `batch()` is.
+const validBatch = (): IngestBodyType => batch() as IngestBodyType
 
 // `null` (not `undefined`) means "send no Authorization header": a default parameter is applied
 // whenever the argument is `undefined`, explicit or not, so `undefined` cannot double as that
@@ -448,6 +455,41 @@ describe('the wire format', () => {
 })
 
 describe('concurrency', () => {
+  const CAPS = { maxStackBytes: 16_384, maxContextBytes: 8_192 }
+
+  it('collapses N concurrent reports of a brand-new fingerprint into one issue', async () => {
+    const service = new IngestService(db(), CAPS)
+    const N = 8
+
+    await Promise.all(Array.from({ length: N }, () => service.record(appId, validBatch())))
+
+    const issues = await db().selectFrom('issues').selectAll().execute()
+    expect(issues).toHaveLength(1)
+    expect(issues[0]!.occurrence_count).toBe(N)
+    expect(await db().selectFrom('events').selectAll().execute()).toHaveLength(N)
+  })
+
+  it('reopens a resolved issue exactly once under N concurrent reports', async () => {
+    const service = new IngestService(db(), CAPS)
+    await service.record(appId, validBatch())
+    await db().updateTable('issues').set({ status: 'resolved' }).execute()
+
+    const N = 8
+    const results = await Promise.all(
+      Array.from({ length: N }, () => service.record(appId, validBatch())),
+    )
+
+    // Only whichever of the N transactions is the first to lock the row finds it `resolved`;
+    // every other one, once it gets the lock, finds the first's `open` already committed.
+    const regressedCount = results.flat().filter((r) => r.regressed).length
+    expect(regressedCount).toBe(1)
+
+    const issue = await db().selectFrom('issues').selectAll().executeTakeFirstOrThrow()
+    expect(issue.status).toBe('open')
+    expect(issue.reopened_at).not.toBeNull()
+    expect(issue.occurrence_count).toBe(N + 1)
+  })
+
   // The upsert takes a row lock (`SELECT ... FOR UPDATE`) per event, in whatever order the
   // batch lists them. Two processes reporting the same two issues in opposite orders each hold
   // one lock and wait on the other's — a textbook deadlock, and Postgres resolves one by

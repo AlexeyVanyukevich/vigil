@@ -31,12 +31,14 @@ export function registerGuard(app: FastifyInstance, service: AuthService): void 
   // CSRF exposure to defend; applying this here would reject a browser's report out of hand and
   // pre-empt the origin policy Slice 4 gives ingest of its own.
   //
-  // Both hooks below also bail out on `request.is404`: Fastify folds every onRequest hook
-  // registered on this instance into the 404 context as well, so without the check a signed-out
-  // visitor hitting a route that never existed sees 401 instead of 404 — a route's existence
-  // must not depend on whether the caller is signed in.
+  // Filtered on `request.routeOptions.url` — the *matched* route pattern — rather than the raw
+  // `request.url`. find-my-way percent-decodes the path before matching it to a route, so
+  // `/%61pi/me` matches the `/api/me` route while its raw url does not start with `/api/`; a
+  // filter on the raw url is a guard an attacker can walk around one encoded letter at a time.
+  // `routeOptions.url` is `undefined` when nothing matched (`request.is404`), so an unrouted
+  // path is naturally skipped without a separate check.
   app.addHook('onRequest', async (request) => {
-    if (!request.url.startsWith('/api/') || request.is404) return
+    if (request.routeOptions.url?.startsWith('/api/') !== true) return
     if (request.method === 'GET' || request.method === 'HEAD') return
     const origin = request.headers.origin
     if (origin === undefined) return
@@ -49,7 +51,7 @@ export function registerGuard(app: FastifyInstance, service: AuthService): void 
   app.addHook('onRequest', async (request) => {
     // Only the API is guarded. The SPA's own HTML and bundle must load without a session — the
     // page is what shows the login form — and `/ingest/*` authenticates with a key instead.
-    if (!request.url.startsWith('/api/') || request.is404) return
+    if (request.routeOptions.url?.startsWith('/api/') !== true) return
     if (request.routeOptions.config?.public === true) return
 
     const token = request.cookies.session

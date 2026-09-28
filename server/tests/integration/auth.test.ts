@@ -143,7 +143,17 @@ describe('the guard', () => {
 
   it('answers an unknown /api route with JSON rather than a page', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/nothing' })
+    expect(response.statusCode).toBe(404)
     expect(response.json().error).toBe('not_found')
+  })
+})
+
+// find-my-way percent-decodes the path before matching it to a route, so a guard that compares
+// against the raw `request.url` can be walked around by encoding a single letter of it.
+describe('the guard against a percent-encoded path', () => {
+  it('still refuses /%61pi/me without a session', async () => {
+    const response = await app.inject({ method: 'GET', url: '/%61pi/me' })
+    expect(response.statusCode).toBe(401)
   })
 })
 

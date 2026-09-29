@@ -3,7 +3,7 @@ import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
 import { UnauthorizedError } from '../auth/guard.js'
 import { findLiveKey, touchKey, type LiveKey } from './key.repository.js'
 import { IngestBody } from './ingest.schemas.js'
-import { IngestService } from './ingest.service.js'
+import type { IngestService } from './ingest.service.js'
 import { ingestBodyLimit } from './ingest.body-limit.js'
 
 declare module 'fastify' {
@@ -18,12 +18,8 @@ declare module 'fastify' {
  * with a cookie, and an application must never be asked for one. This route authenticates on
  * its own terms, with a bearer key, per request, holding no session.
  */
-export function registerIngest(instance: FastifyInstance): void {
+export function registerIngest(instance: FastifyInstance, service: IngestService): void {
   const app = instance.withTypeProvider<TypeBoxTypeProvider>()
-  const service = new IngestService(app.db, {
-    maxStackBytes: app.config.maxStackBytes,
-    maxContextBytes: app.config.maxContextBytes,
-  })
 
   app.decorateRequest('ingestKey', undefined)
 

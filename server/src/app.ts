@@ -9,6 +9,7 @@ import type { Database } from './db/schema.js'
 import { registerErrorHandler } from './shared/errors.js'
 import { registerAuth } from './modules/auth/auth.routes.js'
 import { registerIngest } from './modules/ingest/ingest.routes.js'
+import { IngestService } from './modules/ingest/ingest.service.js'
 import { registerIssues } from './modules/issues/issue.routes.js'
 import { registerApps } from './modules/apps/app.routes.js'
 
@@ -37,12 +38,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.decorate('db', deps.db)
   app.decorate('config', deps.config)
+
+  // One instance, one set of caps, shared by the route and by §13's self-recording.
+  const ingest = new IngestService(deps.db, {
+    maxStackBytes: deps.config.maxStackBytes,
+    maxContextBytes: deps.config.maxContextBytes,
+  })
+
   registerErrorHandler(app)
 
   app.get('/api/health', { config: { public: true } }, async () => ({ status: 'ok' }))
 
   await registerAuth(app)
-  registerIngest(app)
+  registerIngest(app, ingest)
   registerIssues(app)
   registerApps(app)
 

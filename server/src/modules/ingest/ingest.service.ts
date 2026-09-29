@@ -3,6 +3,7 @@ import { sql } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { fingerprintOf } from '../../shared/fingerprint.js'
 import { guardBytes } from '../../shared/bytes.js'
+import { replaceNul } from '../../shared/nul.js'
 import type { IngestBodyType } from './ingest.schemas.js'
 
 export interface RecordedIssue {
@@ -34,7 +35,13 @@ export class IngestService {
    * The whole batch is one transaction: a batch is one unit, and half-storing it would leave
    * the client with no way to tell what to resend.
    */
-  async record(appId: string, body: IngestBodyType): Promise<RecordedIssue[]> {
+  async record(appId: string, received: IngestBodyType): Promise<RecordedIssue[]> {
+    // Every string that reaches a column — `stack`, `message`, `type`, `fingerprint`,
+    // `environment`, and `context`'s keys and values — loses its U+0000, which Postgres refuses
+    // outright: one such event would otherwise fail the whole batch. Done before the byte guards
+    // below, so the caps measure what is actually stored.
+    const body = replaceNul(received)
+
     // Guarded before the transaction opens, so an oversize payload never takes a lock.
     for (const event of body.events) {
       if (event.stack !== undefined) {

@@ -278,6 +278,59 @@ describe('storing a batch', () => {
   })
 })
 
+// Postgres refuses U+0000 in both `text` and `jsonb`. Without replacing it, one event carrying
+// binary garbage fails the whole batch with a 500 — and a client retrying on 5xx resends that
+// batch forever. Replaced, not refused: refusing would throw away the error report itself.
+interface NulCase {
+  where: string
+  patch: Partial<EventInput>
+  column: 'stack' | 'message' | 'context'
+  stored: unknown
+}
+
+const NUL_CASES: NulCase[] = [
+  {
+    where: 'the stack',
+    patch: { stack: `${STACK}\n\u0000garbage` },
+    column: 'stack',
+    stored: `${STACK}\n\uFFFDgarbage`,
+  },
+  {
+    where: 'the message',
+    patch: { message: 'bad \u0000 byte' },
+    column: 'message',
+    stored: 'bad \uFFFD byte',
+  },
+  {
+    where: 'a context value',
+    patch: { context: { body: 'a\u0000b', nested: [{ deeper: '\u0000' }] } },
+    column: 'context',
+    stored: { body: 'a\uFFFDb', nested: [{ deeper: '\uFFFD' }] },
+  },
+  {
+    where: 'a context key',
+    patch: { context: { 'k\u0000': 1, nested: { 'x\u0000y': true } } },
+    column: 'context',
+    stored: { 'k\uFFFD': 1, nested: { 'x\uFFFDy': true } },
+  },
+]
+
+describe('a NUL byte', () => {
+  it.each(NUL_CASES)(
+    'in $where is stored as U+FFFD rather than failing the batch',
+    async ({ patch, column, stored }) => {
+      const poisoned = batch()
+      Object.assign(poisoned.events[0]!, patch)
+
+      const response = await post(poisoned)
+      expect(response.statusCode).toBe(202)
+
+      const event = await db().selectFrom('events').selectAll().executeTakeFirstOrThrow()
+      expect(event[column]).toEqual(stored)
+    },
+  )
+})
+
 describe('regression', () => {
   it('reopens a resolved issue and stamps when', async () => {
     await post(batch())

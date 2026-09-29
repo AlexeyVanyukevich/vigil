@@ -4,8 +4,13 @@ import type { Database } from '../db/schema.js'
 import { findAppBySlug } from '../modules/apps/app.repository.js'
 import type { IngestService } from '../modules/ingest/ingest.service.js'
 import { MAX_MESSAGE_LENGTH, MAX_TYPE_LENGTH } from '../modules/ingest/ingest.schemas.js'
+import { byteLength } from '../shared/bytes.js'
+import { replaceNul } from '../shared/nul.js'
 
 export const VIGIL_SLUG = 'vigil'
+
+/** The last line of a stack the recorder had to cut. Not shaped like a frame, so never parsed as one. */
+export const STACK_TRUNCATION_MARKER = '    … (truncated by vigil)'
 
 export interface SelfRecorder {
   /** Returns nothing, never throws and never rejects. The caller is already handling a failure. */
@@ -16,6 +21,8 @@ export interface SelfRecorderDeps {
   db: Kysely<Database>
   ingest: IngestService
   environment: string
+  /** The same cap `IngestService` enforces; the recorder cuts its own stack to fit it. */
+  maxStackBytes: number
   log: { warn(details: object, message: string): void }
 }
 
@@ -53,7 +60,15 @@ export function createSelfRecorder(deps: SelfRecorderDeps): SelfRecorder {
         {
           type: (thrown.name || 'Error').slice(0, MAX_TYPE_LENGTH),
           message: thrown.message.slice(0, MAX_MESSAGE_LENGTH),
-          ...(typeof thrown.stack === 'string' ? { stack: thrown.stack } : {}),
+          // Cut rather than refused (ruling 29). §6 refuses to truncate so a retrying client
+          // cannot split one issue in two; this is the only producer of `vigil` events, it never
+          // retries, and the cut is deterministic, so the fingerprint is too. Refusing would drop
+          // exactly the failure §13 exists to keep — and since a stack begins with its message,
+          // one long message would be enough. NUL is replaced first because `record()` replaces
+          // it before measuring, and U+FFFD costs three bytes where NUL cost one.
+          ...(typeof thrown.stack === 'string'
+            ? { stack: fitStack(replaceNul(thrown.stack), deps.maxStackBytes) }
+            : {}),
           occurred_at: new Date().toISOString(),
           ...(safe === undefined ? {} : { context: safe }),
         },
@@ -98,4 +113,44 @@ function serialisable(context: Record<string, unknown>): Record<string, unknown>
   } catch {
     return undefined
   }
+}
+
+/**
+ * `stack` cut to at most `maxBytes` UTF-8 bytes — the unit the cap is measured in — at the last
+ * whole line that fits, with `STACK_TRUNCATION_MARKER` as a final line inside the budget. A first
+ * line too long to keep whole (a long message) is cut at a code point instead, since there is no
+ * line boundary to cut at. Deterministic: the same stack always comes out the same.
+ */
+export function fitStack(stack: string, maxBytes: number): string {
+  if (byteLength(stack) <= maxBytes) return stack
+
+  const tail = `\n${STACK_TRUNCATION_MARKER}`
+  const budget = maxBytes - byteLength(tail)
+  if (budget <= 0) return cutToBytes(STACK_TRUNCATION_MARKER, maxBytes)
+
+  const lines = stack.split('\n')
+  const kept: string[] = []
+  let used = 0
+  for (const line of lines) {
+    const cost = byteLength(line) + (kept.length === 0 ? 0 : 1)
+    if (used + cost > budget) break
+    kept.push(line)
+    used += cost
+  }
+  if (kept.length === 0) kept.push(cutToBytes(lines[0] ?? '', budget))
+
+  return `${kept.join('\n')}${tail}`
+}
+
+/** The longest prefix of `value` within `maxBytes`, never splitting a code point. */
+function cutToBytes(value: string, maxBytes: number): string {
+  let used = 0
+  let end = 0
+  for (const char of value) {
+    const size = byteLength(char)
+    if (used + size > maxBytes) break
+    used += size
+    end += char.length
+  }
+  return value.slice(0, end)
 }

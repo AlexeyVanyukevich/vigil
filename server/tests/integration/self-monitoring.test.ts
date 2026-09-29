@@ -4,7 +4,11 @@ import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
 import { signIn } from './auth-helper.js'
 import { IngestService } from '../../src/modules/ingest/ingest.service.js'
 import type { IngestBodyType } from '../../src/modules/ingest/ingest.schemas.js'
-import { createSelfRecorder, type SelfRecorder } from '../../src/self/record.js'
+import {
+  createSelfRecorder,
+  STACK_TRUNCATION_MARKER,
+  type SelfRecorder,
+} from '../../src/self/record.js'
 
 let app: FastifyInstance
 let cookies: Record<string, string>
@@ -21,12 +25,26 @@ function unserialisableError(): Error {
   return error
 }
 
-/** An error whose stack is over the ingest cap, so `IngestService.record()` rejects it. */
+/** An error whose stack is over the ingest cap: the route would refuse it, the recorder cuts it. */
 function oversizeError(): Error {
   const error = new Error('stack too large to store')
   error.stack = `Error: stack too large to store\n${'    at nowhere (x.js:1:1)\n'.repeat(1_000)}`
   return error
 }
+
+/** An error whose `message` getter throws, so the recorder's own write rejects before storing. */
+function hostileError(): Error {
+  const error = new Error()
+  Object.defineProperty(error, 'message', {
+    get() {
+      throw new Error('a hostile getter')
+    },
+  })
+  return error
+}
+
+/** More than `maxContextBytes` of context, which `IngestService.record()` refuses outright. */
+const OVERSIZE_CONTEXT = { blob: 'x'.repeat(CAPS.maxContextBytes + 1) }
 
 /**
  * Routes that throw, registered only in this suite: making a production route fail on demand
@@ -41,8 +59,8 @@ beforeAll(async () => {
       instance.get('/api/unserialisable', async () => {
         throw unserialisableError()
       })
-      instance.get('/api/oversize', async () => {
-        throw oversizeError()
+      instance.get('/api/hostile', async () => {
+        throw hostileError()
       })
       instance.get('/ingest/boom', async () => {
         throw new Error('ingest itself is broken')
@@ -231,7 +249,7 @@ describe('vigil recording its own failures', () => {
     })
 
     it('when the write itself is rejected', async () => {
-      const response = await app.inject({ method: 'GET', url: '/api/oversize', cookies })
+      const response = await app.inject({ method: 'GET', url: '/api/hostile', cookies })
       expect(response.statusCode).toBe(500)
       expect(response.json()).toEqual({ error: 'internal_error', message: 'Internal server error' })
 
@@ -248,6 +266,7 @@ describe('the self recorder, called directly', () => {
       db: db(),
       ingest,
       environment: 'test',
+      maxStackBytes: CAPS.maxStackBytes,
       log: {
         warn: (_details, message) => {
           warnings.push(message)
@@ -280,7 +299,7 @@ describe('the self recorder, called directly', () => {
 
   it('logs a rejected write once and swallows it', async () => {
     const { recorder, warnings } = recorderWith()
-    expect(() => recorder.record(oversizeError(), {})).not.toThrow()
+    expect(() => recorder.record(new Error('context too large'), OVERSIZE_CONTEXT)).not.toThrow()
 
     await until(
       async () => warnings,
@@ -336,5 +355,61 @@ describe('the self recorder, called directly', () => {
     await until(titles, (rows) => rows.includes('Error: sentinel'))
 
     expect(await titles()).toEqual(['Error: sentinel', 'Error: the original'])
+  })
+
+  // Ruling 29: §6 refuses to truncate so a retrying client cannot split one issue in two. The
+  // recorder is the only producer of `vigil` events and never retries, and dropping the event
+  // would defeat §13, so vigil's own stack is cut to fit instead.
+  describe('keeps an error whose stack is over the cap, cut to fit', () => {
+    const stored = () =>
+      db().selectFrom('events').select(['stack', 'message']).executeTakeFirstOrThrow()
+
+    it('a stack of many frames', async () => {
+      const { recorder, warnings } = recorderWith()
+      recorder.record(oversizeError(), {})
+      await until(titles, (rows) => rows.length >= 1)
+
+      expect(await titles()).toEqual(['Error: stack too large to store'])
+      const { stack } = await stored()
+      expect(Buffer.byteLength(stack ?? '', 'utf8')).toBeLessThanOrEqual(CAPS.maxStackBytes)
+      expect(stack?.endsWith(`\n${STACK_TRUNCATION_MARKER}`)).toBe(true)
+      expect(warnings).toEqual([])
+    })
+
+    // The stack begins with the message, so a long message alone overflows it. Two bytes a
+    // character, so a cut measured in code units would think this fits and lose the event.
+    it('a message long enough to overflow the stack on its own', async () => {
+      const { recorder, warnings } = recorderWith()
+      recorder.record(new Error('é'.repeat(10_000)), {})
+      await until(issues, (rows) => rows.length >= 1)
+
+      const { stack } = await stored()
+      expect(Buffer.byteLength(stack ?? '', 'utf8')).toBeLessThanOrEqual(CAPS.maxStackBytes)
+      expect(stack?.endsWith(STACK_TRUNCATION_MARKER)).toBe(true)
+      expect(warnings).toEqual([])
+    })
+
+    // `record()` stores each NUL as U+FFFD, three bytes where it was one, and measures after.
+    // A stack cut before that replacement would triple past the cap and be refused.
+    it('a stack full of NUL bytes', async () => {
+      const error = new Error('binary in the stack')
+      error.stack = `Error: binary in the stack\n${`${'\u0000'.repeat(100)}\n`.repeat(200)}`
+      const { recorder, warnings } = recorderWith()
+      recorder.record(error, {})
+      await until(issues, (rows) => rows.length >= 1)
+
+      const { stack } = await stored()
+      expect(Buffer.byteLength(stack ?? '', 'utf8')).toBeLessThanOrEqual(CAPS.maxStackBytes)
+      expect(warnings).toEqual([])
+    })
+
+    it('the same oversized error twice, as one issue', async () => {
+      const { recorder } = recorderWith()
+      recorder.record(oversizeError(), {})
+      recorder.record(oversizeError(), {})
+      const rows = await until(issues, (found) => found[0]?.count === 2)
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.count).toBe(2)
+    })
   })
 })

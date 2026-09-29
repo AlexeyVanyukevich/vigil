@@ -52,6 +52,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       db: deps.db,
       ingest,
       environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+      maxStackBytes: deps.config.maxStackBytes,
       log: app.log,
     }),
   )

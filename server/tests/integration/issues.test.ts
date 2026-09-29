@@ -55,6 +55,13 @@ const distinct = (message: string) => ({ message, fingerprint: message })
 
 const list = (query = '') => app.inject({ method: 'GET', url: `/api/issues${query}`, cookies })
 
+const idOf = async (title: string) => {
+  const issues: { id: string; title: string }[] = (await list()).json().issues
+  const found = issues.find((issue) => issue.title === title)
+  if (found === undefined) throw new Error(`no issue titled ${title}`)
+  return found.id
+}
+
 beforeAll(async () => {
   app = await buildTestApp()
 })
@@ -185,9 +192,11 @@ describe('issue detail', () => {
   it('returns the issue with its recent occurrences, newest first', async () => {
     await report(key, { occurredAt: new Date(Date.now() - 60_000) })
     await report(key)
+    // A second issue with an event of its own, which must not appear under the first.
+    await report(key, distinct('elsewhere'))
     const response = await app.inject({
       method: 'GET',
-      url: `/api/issues/${await idOfFirst()}`,
+      url: `/api/issues/${await idOf('TypeError: boom')}`,
       cookies,
     })
 
@@ -195,6 +204,7 @@ describe('issue detail', () => {
     const body = response.json()
     expect(body.issue.title).toBe('TypeError: boom')
     expect(body.events).toHaveLength(2)
+    expect(body.events.map((e: { message: string }) => e.message)).toEqual(['boom', 'boom'])
     expect(new Date(body.events[0].occurred_at).getTime()).toBeGreaterThan(
       new Date(body.events[1].occurred_at).getTime(),
     )
@@ -227,10 +237,20 @@ describe('issue detail', () => {
 
 describe('resolving and ignoring', () => {
   const idOfFirst = async () => (await list()).json().issues[0].id as string
+  const statusOf = async (id: string) =>
+    (
+      await db()
+        .selectFrom('issues')
+        .select('status')
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+    ).status
 
   it('resolves an issue', async () => {
     await report(key)
-    const id = await idOfFirst()
+    // A bystander, so an update that forgot its WHERE would show up as a second change.
+    await report(key, distinct('bystander'))
+    const id = await idOf('TypeError: boom')
     const response = await app.inject({
       method: 'PATCH',
       url: `/api/issues/${id}`,
@@ -238,24 +258,30 @@ describe('resolving and ignoring', () => {
       payload: { status: 'resolved' },
     })
     expect(response.statusCode).toBe(204)
-    const issue = await db().selectFrom('issues').select('status').executeTakeFirstOrThrow()
-    expect(issue.status).toBe('resolved')
+    expect(await statusOf(id)).toBe('resolved')
+    expect(await statusOf(await idOf('TypeError: bystander'))).toBe('open')
   })
 
   it('ignores one, and unmutes it again', async () => {
     await report(key)
-    const id = await idOfFirst()
+    await report(key, distinct('bystander'))
+    const id = await idOf('TypeError: boom')
+    const bystander = await idOf('TypeError: bystander')
+    // Resolved, so neither `ignored` nor `open` written to every row can leave it looking right.
+    await db()
+      .updateTable('issues')
+      .set({ status: 'resolved' })
+      .where('id', '=', bystander)
+      .execute()
     const patch = (status: string) =>
       app.inject({ method: 'PATCH', url: `/api/issues/${id}`, cookies, payload: { status } })
 
     expect((await patch('ignored')).statusCode).toBe(204)
-    expect(
-      (await db().selectFrom('issues').select('status').executeTakeFirstOrThrow()).status,
-    ).toBe('ignored')
+    expect(await statusOf(id)).toBe('ignored')
+    expect(await statusOf(bystander)).toBe('resolved')
     expect((await patch('open')).statusCode).toBe(204)
-    expect(
-      (await db().selectFrom('issues').select('status').executeTakeFirstOrThrow()).status,
-    ).toBe('open')
+    expect(await statusOf(id)).toBe('open')
+    expect(await statusOf(bystander)).toBe('resolved')
   })
 
   it('refuses a status outside the three', async () => {

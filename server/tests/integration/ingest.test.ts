@@ -596,6 +596,7 @@ describe('concurrency', () => {
     // were even there. Holding the row's lock from a separate transaction, starting all N calls
     // so they queue behind it, and only then releasing it guarantees they really do overlap.
     const holder = await db().startTransaction().execute()
+    let committed = false
     let results: RecordedIssue[][]
     try {
       await holder
@@ -608,16 +609,22 @@ describe('concurrency', () => {
       const pending = Promise.all(
         Array.from({ length: N }, () => service.record(appId, validBatch())),
       )
+      // Handled from the start. A rejection while the test is still waiting below would
+      // otherwise have no handler yet and be reported as unhandled; `await pending` still
+      // rethrows it.
+      pending.catch(() => {})
 
       // Time for all N calls to reach `.forUpdate()` and queue behind `holder` — without it,
       // `commit()` could run before some of them have issued a query at all.
       await new Promise((resolve) => setTimeout(resolve, 300))
       await holder.commit().execute()
+      committed = true
 
       results = await pending
-    } catch (error) {
-      await holder.rollback().execute()
-      throw error
+    } finally {
+      // Only a holder still open: rolling back a committed one throws, and that error would
+      // replace the failure that brought us here.
+      if (!committed) await holder.rollback().execute()
     }
 
     // Only whichever of the N transactions is the first to lock the row finds it `resolved`;

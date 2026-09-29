@@ -94,6 +94,9 @@ export async function recentOccurrences(
       // By when it happened, not when it landed: an event replayed from an offline queue belongs
       // where it occurred in the story, not at the top because it arrived last.
       .orderBy('occurred_at', 'desc')
+      // A burst from one page load shares a timestamp; without a tiebreak those rows swap places
+      // between reloads, as the list's would.
+      .orderBy('id')
       .limit(limit)
       .execute()
   )

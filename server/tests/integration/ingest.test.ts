@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
+import { sql } from 'kysely'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
 import { insertApp } from '../../src/modules/apps/app.repository.js'
 import { insertKey, mintIngestKey } from '../../src/modules/ingest/key.repository.js'
-import { IngestService, type RecordedIssue } from '../../src/modules/ingest/ingest.service.js'
+import { IngestService } from '../../src/modules/ingest/ingest.service.js'
 import type { IngestBodyType } from '../../src/modules/ingest/ingest.schemas.js'
 
 let app: FastifyInstance
@@ -582,54 +583,78 @@ describe('concurrency', () => {
     expect(await db().selectFrom('events').selectAll().execute()).toHaveLength(N)
   })
 
-  it('reopens a resolved issue exactly once under N concurrent reports', async () => {
-    const service = new IngestService(db(), CAPS)
-    await service.record(appId, validBatch())
-    await db().updateTable('issues').set({ status: 'resolved' }).execute()
+  /**
+   * Polls until `expected` backends are queued on a lock. `fileParallelism: false` keeps other
+   * test files out of this database, so every waiter counted is one this test started.
+   */
+  async function waitForLockWaiters(expected: number, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const { rows } = await sql<{ waiting: number }>`
+        select count(*)::int as waiting from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock'
+      `.execute(db())
+      const waiting = rows[0]?.waiting ?? 0
+      if (waiting >= expected) return
+      if (Date.now() > deadline) {
+        throw new Error(
+          `${waiting} of ${expected} backends were waiting on a lock after ${timeoutMs}ms`,
+        )
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
 
-    const N = 8
-
-    // A local, low-latency Postgres gives the N calls nothing to actually contend over: without
-    // forcing it, each `service.record()` call runs start-to-finish before the next one even
-    // issues its first query, and the row lock this test exists to prove correct is never
-    // touched by more than one transaction at a time — it would pass whether or not `.forUpdate()`
-    // were even there. Holding the row's lock from a separate transaction, starting all N calls
-    // so they queue behind it, and only then releasing it guarantees they really do overlap.
+  /**
+   * A local, low-latency Postgres gives concurrent calls nothing to contend over: each runs
+   * start-to-finish before the next issues its first query, and a lock is never held by more
+   * than one of them at once. So this app's issue rows are locked from a transaction of its own,
+   * `contend` is started, and the rows are released only once `waiters` backends are queued
+   * behind them — the contenders then really do overlap.
+   */
+  async function raceBehindLock<T>(contend: () => Promise<T>, waiters: number): Promise<T> {
     const holder = await db().startTransaction().execute()
     let committed = false
-    let results: RecordedIssue[][]
     try {
       await holder
         .selectFrom('issues')
         .select('id')
         .where('app_id', '=', appId)
         .forUpdate()
-        .executeTakeFirstOrThrow()
+        .execute()
 
-      const pending = Promise.all(
-        Array.from({ length: N }, () => service.record(appId, validBatch())),
-      )
+      const pending = contend()
       // Handled from the start. A rejection while the test is still waiting below would
       // otherwise have no handler yet and be reported as unhandled; `await pending` still
       // rethrows it.
       pending.catch(() => {})
 
-      // Time for all N calls to reach `.forUpdate()` and queue behind `holder` — without it,
-      // `commit()` could run before some of them have issued a query at all.
-      await new Promise((resolve) => setTimeout(resolve, 300))
+      await waitForLockWaiters(waiters)
       await holder.commit().execute()
       committed = true
 
-      results = await pending
+      return await pending
     } finally {
       // Only a holder still open: rolling back a committed one throws, and that error would
       // replace the failure that brought us here.
       if (!committed) await holder.rollback().execute()
     }
+  }
+
+  it('reopens a resolved issue exactly once under N concurrent reports', async () => {
+    const service = new IngestService(db(), CAPS)
+    await service.record(appId, validBatch())
+    await db().updateTable('issues').set({ status: 'resolved' }).execute()
+
+    const N = 8
+    const results = await raceBehindLock(
+      () => Promise.all(Array.from({ length: N }, () => service.record(appId, validBatch()))),
+      N,
+    )
 
     // Only whichever of the N transactions is the first to lock the row finds it `resolved`;
-    // every other one, once it gets the lock (once `holder` has released it), finds the
-    // first's `open` already committed.
+    // every other one, once it gets the lock (once the holder has released it), finds the
+    // first's `open` already committed. Without the lock, all N read `resolved`.
     const regressedCount = results.flat().filter((r) => r.regressed).length
     expect(regressedCount).toBe(1)
 
@@ -639,11 +664,10 @@ describe('concurrency', () => {
     expect(issue.occurrence_count).toBe(N + 1)
   })
 
-  // The upsert takes a row lock (`SELECT ... FOR UPDATE`) per event, in whatever order the
-  // batch lists them. Two processes reporting the same two issues in opposite orders each hold
-  // one lock and wait on the other's — a textbook deadlock, and Postgres resolves one by
-  // aborting it with 40P01 rather than letting either wait forever. That failure must not reach
-  // the client as a lost batch.
+  // The upsert takes a row lock (`SELECT ... FOR UPDATE`) per event. Were they taken in the
+  // order the batch lists them, two processes reporting the same two issues in opposite orders
+  // would each hold one lock and wait on the other's — a textbook deadlock, which Postgres
+  // resolves by aborting one with 40P01. That failure must not reach the client as a lost batch.
   it('does not deadlock when two concurrent batches list the same two issues in opposite order', async () => {
     const eventA = {
       type: 'Error',
@@ -665,22 +689,17 @@ describe('concurrency', () => {
     await post(batch({ events: [eventA] }))
     await post(batch({ events: [eventB] }))
 
-    // Padding between the two contested events with real (but uncontended — distinct
-    // fingerprints per side) DB round trips, so both transactions have already taken their own
-    // first lock before either reaches for the other's — without it, one batch can finish and
-    // commit before the second has even started, and the two never actually overlap.
-    const padding = (prefix: string) =>
-      Array.from({ length: 15 }, (_, i) => ({
-        type: 'Error',
-        message: `padding ${i}`,
-        occurred_at: new Date().toISOString(),
-        fingerprint: `${prefix}-${i}`,
-      }))
-
-    const batchAB = batch({ events: [eventA, ...padding('ab'), eventB] })
-    const batchBA = batch({ events: [eventB, ...padding('ba'), eventA] })
-
-    const [resAB, resBA] = await Promise.all([post(batchAB), post(batchBA)])
+    // Both batches queue behind the held rows. Released together, each would take its first
+    // row at once in batch order and then block on the other's — so only a fixed lock order
+    // answers 202 twice.
+    const [resAB, resBA] = await raceBehindLock(
+      () =>
+        Promise.all([
+          post(batch({ events: [eventA, eventB] })),
+          post(batch({ events: [eventB, eventA] })),
+        ]),
+      2,
+    )
     expect(resAB.statusCode).toBe(202)
     expect(resBA.statusCode).toBe(202)
   })

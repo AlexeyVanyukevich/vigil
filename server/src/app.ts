@@ -9,6 +9,8 @@ import type { Database } from './db/schema.js'
 import { registerErrorHandler } from './shared/errors.js'
 import { registerAuth } from './modules/auth/auth.routes.js'
 import { registerIngest } from './modules/ingest/ingest.routes.js'
+import { registerIssues } from './modules/issues/issue.routes.js'
+import { registerApps } from './modules/apps/app.routes.js'
 
 export interface AppDeps {
   config: Config
@@ -41,6 +43,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   await registerAuth(app)
   registerIngest(app)
+  registerIssues(app)
+  registerApps(app)
 
   await registerSpa(app)
 

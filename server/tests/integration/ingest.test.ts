@@ -15,6 +15,8 @@ let otherKey: string
 
 const db = () => getTestDb()
 
+const CAPS = { maxStackBytes: 16_384, maxContextBytes: 8_192 }
+
 const STACK = `TypeError: Cannot read properties of undefined (reading 'id')
     at handleBooking (/app/src/modules/bookings/booking.service.js:42:17)
     at process (/app/node_modules/fastify/lib/handle.js:118:9)`
@@ -269,6 +271,34 @@ describe('storing a batch', () => {
     expect(event.context).toEqual({ route: '/api/bookings', method: 'POST' })
   })
 
+  // Nothing but the 8 KB cap limits how deep a context nests. `JSON.stringify` and `jsonb` take
+  // this depth in their stride, so anything that walks the context recursively is the weak link.
+  it('stores a context nested thousands deep, within the cap', async () => {
+    let nested: unknown = 0
+    for (let depth = 0; depth < 4_000; depth++) nested = [nested]
+    const deep = batch()
+    deep.events[0]!.context = { k: nested }
+
+    const response = await post(deep)
+    expect(response.statusCode).toBe(202)
+
+    const event = await db().selectFrom('events').select('context').executeTakeFirstOrThrow()
+    expect(JSON.stringify(event.context)).toBe(JSON.stringify({ k: nested }))
+  })
+
+  // §13 records vigil's own failures by calling the service in-process, with real JavaScript
+  // values rather than parsed JSON, so a context is stored as `JSON.stringify` would write it.
+  it('stores a Date in a context passed in-process as its ISO string', async () => {
+    const at = new Date('2026-09-05T12:34:56.789Z')
+    const withDate = validBatch()
+    withDate.events[0]!.context = { at, nested: [{ at }] }
+
+    await new IngestService(db(), CAPS).record(appId, withDate)
+
+    const event = await db().selectFrom('events').select('context').executeTakeFirstOrThrow()
+    expect(event.context).toEqual({ at: at.toISOString(), nested: [{ at: at.toISOString() }] })
+  })
+
   it('accepts an error with no stack at all', async () => {
     const stackless = batch()
     delete (stackless.events[0] as Record<string, unknown>).stack
@@ -316,6 +346,18 @@ const NUL_CASES: NulCase[] = [
   },
 ]
 
+// Each of these decides the fingerprint of a stackless event.
+interface GroupingCase {
+  where: string
+  patch: (text: string) => Partial<EventInput>
+}
+
+const GROUPING_CASES: GroupingCase[] = [
+  { where: 'the type', patch: (text) => ({ type: `Error${text}` }) },
+  { where: 'the message', patch: (text) => ({ message: `bad ${text} byte` }) },
+  { where: 'the fingerprint', patch: (text) => ({ fingerprint: `checkout${text}` }) },
+]
+
 describe('a NUL byte', () => {
   it.each(NUL_CASES)(
     'in $where is stored as U+FFFD rather than failing the batch',
@@ -330,6 +372,34 @@ describe('a NUL byte', () => {
       expect(event[column]).toEqual(stored)
     },
   )
+
+  // Grouping must see the text that is stored. Otherwise two issues would carry the same stored
+  // text, split by a difference nobody can see on the dashboard.
+  it.each(GROUPING_CASES)('in $where groups with the U+FFFD it is stored as', async ({ patch }) => {
+    for (const text of ['\u0000', '\uFFFD']) {
+      const event = batch()
+      Object.assign(event.events[0]!, patch(text))
+      delete (event.events[0] as Record<string, unknown>).stack
+      expect((await post(event)).statusCode).toBe(202)
+    }
+
+    expect(await db().selectFrom('issues').selectAll().execute()).toHaveLength(1)
+  })
+})
+
+describe('a backslash followed by the text u0000', () => {
+  // Serialised, this is `\\u0000`: an escaped backslash, then plain text. It carries no NUL,
+  // and replacing inside the serialised context must not mistake it for one.
+  it('is stored unchanged', async () => {
+    const context = { path: 'C:\\u0000dir', nested: [{ 'key\\u0000': 'x\\\\u0000' }] }
+    const literal = batch()
+    literal.events[0]!.context = context
+
+    expect((await post(literal)).statusCode).toBe(202)
+
+    const event = await db().selectFrom('events').select('context').executeTakeFirstOrThrow()
+    expect(event.context).toEqual(context)
+  })
 })
 
 describe('regression', () => {
@@ -569,8 +639,6 @@ describe('the wire format', () => {
 })
 
 describe('concurrency', () => {
-  const CAPS = { maxStackBytes: 16_384, maxContextBytes: 8_192 }
-
   it('collapses N concurrent reports of a brand-new fingerprint into one issue', async () => {
     const service = new IngestService(db(), CAPS)
     const N = 8

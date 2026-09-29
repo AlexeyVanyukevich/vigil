@@ -3,7 +3,7 @@ import { sql } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { fingerprintOf } from '../../shared/fingerprint.js'
 import { guardBytes } from '../../shared/bytes.js'
-import { replaceNul } from '../../shared/nul.js'
+import { replaceNul, stringifyWithoutNul } from '../../shared/nul.js'
 import type { IngestBodyType } from './ingest.schemas.js'
 
 export interface RecordedIssue {
@@ -11,6 +11,20 @@ export interface RecordedIssue {
   /** Slice 2 turns these two flags into `issue.new` and `issue.regressed` outbox rows. */
   isNew: boolean
   regressed: boolean
+}
+
+/**
+ * An event as it is stored: every string that reaches a column has lost its U+0000, and
+ * `context` is already the JSON text written to its column.
+ */
+interface CleanEvent {
+  type: string
+  message: string
+  stack: string | null
+  occurredAt: Date
+  count: number
+  context: string | null
+  fingerprint: string | undefined
 }
 
 export interface Caps {
@@ -39,16 +53,25 @@ export class IngestService {
     // Every string that reaches a column — `stack`, `message`, `type`, `fingerprint`,
     // `environment`, and `context`'s keys and values — loses its U+0000, which Postgres refuses
     // outright: one such event would otherwise fail the whole batch. Done before the byte guards
-    // below, so the caps measure what is actually stored.
-    const body = replaceNul(received)
+    // and the fingerprint below, so the caps measure what is stored and grouping sees it too.
+    const environment = replaceNul(received.environment)
+    const events = received.events.map((event): CleanEvent => ({
+      type: replaceNul(event.type),
+      message: replaceNul(event.message),
+      stack: event.stack === undefined ? null : replaceNul(event.stack),
+      occurredAt: new Date(event.occurred_at),
+      count: event.count ?? 1,
+      context: event.context === undefined ? null : stringifyWithoutNul(event.context),
+      fingerprint: event.fingerprint === undefined ? undefined : replaceNul(event.fingerprint),
+    }))
 
     // Guarded before the transaction opens, so an oversize payload never takes a lock.
-    for (const event of body.events) {
-      if (event.stack !== undefined) {
+    for (const event of events) {
+      if (event.stack !== null) {
         guardBytes(event.stack, this.caps.maxStackBytes, 'stack')
       }
-      if (event.context !== undefined) {
-        guardBytes(JSON.stringify(event.context), this.caps.maxContextBytes, 'context')
+      if (event.context !== null) {
+        guardBytes(event.context, this.caps.maxContextBytes, 'context')
       }
     }
 
@@ -59,13 +82,13 @@ export class IngestService {
     // opposite orders, and Postgres would abort one of them with a 40P01 deadlock rather than
     // let it wait forever. A fixed, deterministic order removes the cycle entirely: every
     // transaction that touches both rows reaches for the alphabetically-first one first.
-    const withFingerprint = body.events.map((event, index) => ({
+    const withFingerprint = events.map((event, index) => ({
       index,
       event,
       ...fingerprintOf({
         type: event.type,
         message: event.message,
-        stack: event.stack,
+        stack: event.stack ?? undefined,
         fingerprint: event.fingerprint,
       }),
     }))
@@ -82,7 +105,7 @@ export class IngestService {
         recorded[item.index] = await this.recordOne(
           trx,
           appId,
-          body,
+          { environment, runtime: received.runtime },
           item.event,
           item.fingerprint,
           item.culprit,
@@ -95,13 +118,12 @@ export class IngestService {
   private async recordOne(
     trx: Transaction<Database>,
     appId: string,
-    body: IngestBodyType,
-    event: IngestBodyType['events'][number],
+    body: Pick<IngestBodyType, 'environment' | 'runtime'>,
+    event: CleanEvent,
     fingerprint: string,
     culprit: string | null,
   ): Promise<RecordedIssue> {
-    const occurredAt = new Date(event.occurred_at)
-    const count = event.count ?? 1
+    const { occurredAt, count } = event
     const title = event.message === '' ? event.type : `${event.type}: ${event.message}`
 
     // Insert first, and let the unique constraint decide. Two processes reporting the same new
@@ -167,8 +189,8 @@ export class IngestService {
         issue_id: issueId,
         occurred_at: occurredAt,
         message: event.message,
-        stack: event.stack ?? null,
-        context: event.context === undefined ? null : JSON.stringify(event.context),
+        stack: event.stack,
+        context: event.context,
         count,
       })
       .execute()

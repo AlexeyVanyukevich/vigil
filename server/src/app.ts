@@ -10,6 +10,7 @@ import { registerErrorHandler } from './shared/errors.js'
 import { registerAuth } from './modules/auth/auth.routes.js'
 import { registerIngest } from './modules/ingest/ingest.routes.js'
 import { IngestService } from './modules/ingest/ingest.service.js'
+import { createSelfRecorder } from './self/record.js'
 import { registerIssues } from './modules/issues/issue.routes.js'
 import { registerApps } from './modules/apps/app.routes.js'
 
@@ -45,7 +46,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     maxContextBytes: deps.config.maxContextBytes,
   })
 
-  registerErrorHandler(app)
+  registerErrorHandler(
+    app,
+    createSelfRecorder({
+      db: deps.db,
+      ingest,
+      environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+      log: app.log,
+    }),
+  )
 
   app.get('/api/health', { config: { public: true } }, async () => ({ status: 'ok' }))
 

@@ -1,4 +1,5 @@
 import type { FastifyError, FastifyInstance } from 'fastify'
+import type { SelfRecorder } from '../self/record.js'
 
 export abstract class AppError extends Error {
   abstract readonly statusCode: number
@@ -37,7 +38,11 @@ export class PayloadTooLargeError extends AppError {
   readonly code = 'payload_too_large'
 }
 
-export function registerErrorHandler(app: FastifyInstance): void {
+/**
+ * `self` is optional: without a recorder the handler answers exactly as it always has, and with
+ * one it answers the same way and records the unexpected failures besides.
+ */
+export function registerErrorHandler(app: FastifyInstance, self?: SelfRecorder): void {
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error instanceof AppError) {
       void reply.status(error.statusCode).send({
@@ -61,8 +66,27 @@ export function registerErrorHandler(app: FastifyInstance): void {
     }
     request.log.error({ err: error }, 'unhandled error')
     void reply.status(500).send({ error: 'internal_error', message: 'Internal server error' })
+
+    // Only here, and after the answer is on its way. An AppError, a schema rejection or any
+    // other 4xx is the caller's doing, not a defect, and filing those would bury the one thing
+    // the issue list exists to surface.
+    //
+    // A failure on an ingest route is skipped as well (§13): recording it would be vigil
+    // reporting on the path that records reports. Judged by the matched route pattern, like the
+    // /api guard, so a percent-encoded prefix does not walk around it.
+    //
+    // The context is built from chosen fields only, never the error or request themselves: an
+    // error commonly carries a cycle back to a request or a socket.
+    const route = request.routeOptions.url
+    if (self !== undefined && !isIngestRoute(route)) {
+      self.record(error, { method: request.method, route: route ?? null, status_code: 500 })
+    }
   })
 
   // The not-found handler is set in app.ts instead: Fastify allows exactly one per instance,
   // and it has to answer JSON under /api and /ingest and the SPA's index.html everywhere else.
+}
+
+function isIngestRoute(matchedUrl: string | undefined): boolean {
+  return matchedUrl === '/ingest' || matchedUrl?.startsWith('/ingest/') === true
 }

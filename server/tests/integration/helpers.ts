@@ -34,9 +34,13 @@ export async function resetDb(): Promise<void> {
     .execute()
 }
 
-/** Built the way `server.ts` builds it, against the one Testcontainers database. */
+/**
+ * Built the way `server.ts` builds it, against the one Testcontainers database.
+ *
+ * `routes` registers suite-only routes before `ready()`, after which Fastify refuses new ones.
+ */
 export async function buildTestApp(
-  overrides: { config?: Partial<Config> } = {},
+  overrides: { config?: Partial<Config>; routes?: (app: FastifyInstance) => void } = {},
 ): Promise<FastifyInstance> {
   const config: Config = {
     databaseUrl: inject('databaseUrl'),
@@ -53,6 +57,7 @@ export async function buildTestApp(
   }
 
   const app = await buildApp({ config, db: getTestDb() })
+  overrides.routes?.(app)
   await app.ready()
   return app
 }

@@ -394,6 +394,40 @@ describe('the hard caps', () => {
     expect(response.json()).toEqual({ accepted: 100 })
   })
 
+  // The same, with each field at its cap in the escaping that is worst for how its cap is
+  // measured. The schema's `maxLength` counts code points, so an astral character is one unit of
+  // `message`'s cap — and Python's `json.dumps` writes it as a surrogate pair, `😀`,
+  // twelve bytes. `stack` and `context` are byte caps, and any one byte can arrive as `\u00XX`,
+  // six. Written by hand, since `JSON.stringify` escapes neither.
+  it('accepts a batch at every cap, with every character written as an escape', async () => {
+    const escaped = (value: string) =>
+      `"${Array.from({ length: value.length }, (_, i) => `\\u${value.charCodeAt(i).toString(16).padStart(4, '0')}`).join('')}"`
+
+    const astral = '\u{1F600}'
+    const context = { k: 'a'.repeat(8_192 - '{"k":""}'.length) } // at the 8,192-byte cap
+    const event = [
+      `{"type":${escaped(astral.repeat(200))}`, // at MAX_TYPE_LENGTH
+      `"message":${escaped(astral.repeat(4_000))}`, // at MAX_MESSAGE_LENGTH
+      `"stack":${escaped('a'.repeat(16_384))}`, // at the 16,384-byte cap
+      `"occurred_at":"${new Date().toISOString()}"`,
+      `"fingerprint":${escaped(astral.repeat(200))}`, // at MAX_FINGERPRINT_LENGTH
+      `"context":{${escaped('k')}:${escaped(context.k)}}}`,
+    ].join(',')
+    const payload = `{"environment":${escaped(astral.repeat(64))},"runtime":"node","events":[${Array.from({ length: 100 }, () => event).join(',')}]}`
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/ingest/events',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      payload,
+    })
+    expect(response.statusCode).toBe(202)
+    expect(response.json()).toEqual({ accepted: 100 })
+
+    const stored = await db().selectFrom('events').select('message').executeTakeFirstOrThrow()
+    expect(stored.message).toBe(astral.repeat(4_000))
+  })
+
   it('refuses a batch over the event limit', async () => {
     const capped = await buildTestApp({ config: { maxEventsPerBatch: 2 } })
     try {

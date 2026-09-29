@@ -109,8 +109,14 @@ describe('the issues list', () => {
   })
 
   it('sorts by count when asked', async () => {
+    // `common` is seen earlier, so last-seen order is the reverse of count order: a dropped
+    // `sort` parameter would fall back to last seen and put `rare` first.
+    await report(key, {
+      ...distinct('common'),
+      count: 500,
+      occurredAt: new Date(Date.now() - 60_000),
+    })
     await report(key, distinct('rare'))
-    await report(key, { ...distinct('common'), count: 500 })
     const titles = (await list('?sort=count')).json().issues.map((i: { title: string }) => i.title)
     expect(titles).toEqual(['TypeError: common', 'TypeError: rare'])
   })

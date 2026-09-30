@@ -341,6 +341,27 @@ const secretCases: SecretCase[] = [
     expected: { fingerprint: '[redacted]' },
   },
   {
+    name: 'scrubs a Bearer credential out of the message and the stack',
+    error: () => new Error('engine refused Bearer sk_live_abc123'),
+    secrets: [],
+    expected: {
+      message: 'engine refused Bearer [redacted]',
+      stack: expect.stringContaining('Error: engine refused Bearer [redacted]'),
+    },
+  },
+  {
+    name: 'scrubs a Basic credential out of the message',
+    error: () => new Error('proxy refused Basic dXNlcjpwYXNz'),
+    secrets: [],
+    expected: { message: 'proxy refused Basic [redacted]' },
+  },
+  {
+    name: 'scrubs a raw header line out of a multi-line message',
+    error: () => new Error('upstream failed\ncookie: sid=abc123\nhost: a'),
+    secrets: [],
+    expected: { message: 'upstream failed\ncookie: [redacted]\nhost: a' },
+  },
+  {
     // Replaced in list order, the shorter secret would cut the longer one and leave its tail.
     name: 'scrubs overlapping configured secrets whole, whichever is listed first',
     error: () => new Error('key=bk_live_9f8e7d6c'),

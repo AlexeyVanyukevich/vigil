@@ -27,6 +27,64 @@ function isSensitiveKey(key: string): boolean {
   return ALWAYS_REDACTED.some((needle) => flat.includes(needle))
 }
 
+/** The characters RFC 9110 allows in a header name. */
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+
+/**
+ * A string shaped like a header name that `ALWAYS_REDACTED` would redact as a key. In an array
+ * it says the element after it is that header's value: `rawHeaders` is `[name, value, …]`, and
+ * a header list is `[name, value]` tuples, and neither gives the value a key of its own.
+ */
+function isCredentialName(value: string): boolean {
+  if (value.length > 128) return false
+  const name = value.trim()
+  return HEADER_NAME.test(name) && isSensitiveKey(name)
+}
+
+/** Headers whose value is a credential, as they are written in raw HTTP or printed objects. */
+const CREDENTIAL_HEADERS = [
+  'proxy-authorization',
+  'authorization',
+  'set-cookie',
+  'cookie',
+  'x-api-key',
+]
+
+/**
+ * One such header and the rest of its line: a raw head (`Cookie: sid=1\r\n`), a printed object
+ * (`{ cookie: 'sid=1' }`) or JSON (`"cookie":"sid=1"`). Everything after the colon to the end of
+ * the line goes, since where the value stops cannot be told in general. A value already
+ * redacted is skipped, so text rendered from a redacted object keeps the rest of its line.
+ */
+const CREDENTIAL_LINE = new RegExp(
+  `(^|[^A-Za-z0-9-])(["']?)(${CREDENTIAL_HEADERS.join('|')})\\2([ \\t]*:[ \\t]*)` +
+    `(?!["']?\\[redacted\\])[^\\r\\n]*`,
+  'gim',
+)
+
+/** An RFC 6750 bearer token or an RFC 7617 basic credential, wherever it is written. */
+const CREDENTIAL_SCHEME = /\b(bearer|basic)([ \t]+)[A-Za-z0-9\-._~+/]+=*/gi
+
+/**
+ * Credentials that need no configuration to recognise: the value of a sensitive header line,
+ * and a `Bearer` or `Basic` credential in free text. A secret the redactor cannot recognise by
+ * shape has to be configured.
+ */
+export function scrubCredentials(text: string): string {
+  return text
+    .replace(CREDENTIAL_LINE, `$1$2$3$2$4${PLACEHOLDER}`)
+    .replace(CREDENTIAL_SCHEME, `$1$2${PLACEHOLDER}`)
+}
+
+/** One property of something hostile, or `undefined` if reading it throws. */
+function read(owner: object, key: string | number): { value: unknown } | undefined {
+  try {
+    return { value: (owner as Record<string | number, unknown>)[key] }
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * The configured secrets worth matching: trimmed, and without the blank ones, which would
  * otherwise match every string there is. Tolerates a caller that passes something else.
@@ -57,7 +115,7 @@ export function redact(value: unknown, secrets: readonly string[] = []): unknown
   let budget = MAX_OBJECTS
 
   const scrub = (text: string): string =>
-    live.some((secret) => text.includes(secret)) ? PLACEHOLDER : text
+    live.some((secret) => text.includes(secret)) ? PLACEHOLDER : scrubCredentials(text)
 
   function walk(node: unknown, depth: number, underConstructor: boolean): unknown {
     try {
@@ -101,7 +159,18 @@ export function redact(value: unknown, secrets: readonly string[] = []): unknown
       if (Array.isArray(object)) {
         const items: unknown[] = []
         const kept = Math.min(object.length, MAX_ENTRIES)
-        for (let i = 0; i < kept; i += 1) items.push(walkProperty(object, i, depth))
+        let credentialValue = false
+        for (let i = 0; i < kept; i += 1) {
+          if (credentialValue) {
+            // Not read as a name in its turn: a redacted value is not the next header's name.
+            items.push(PLACEHOLDER)
+            credentialValue = false
+            continue
+          }
+          const item = read(object, i)
+          items.push(item === undefined ? '[unreadable]' : walk(item.value, depth + 1, false))
+          credentialValue = typeof item?.value === 'string' && isCredentialName(item.value)
+        }
         if (object.length > kept) items.push(`[${object.length - kept} more items]`)
         return items
       }
@@ -126,17 +195,12 @@ export function redact(value: unknown, secrets: readonly string[] = []): unknown
 
   function walkProperty(
     owner: object,
-    key: string | number,
+    key: string,
     depth: number,
-    underConstructor = false,
+    underConstructor: boolean,
   ): unknown {
-    let item: unknown
-    try {
-      item = (owner as Record<string | number, unknown>)[key]
-    } catch {
-      return '[unreadable]'
-    }
-    return walk(item, depth + 1, underConstructor)
+    const item = read(owner, key)
+    return item === undefined ? '[unreadable]' : walk(item.value, depth + 1, underConstructor)
   }
 
   return walk(value, 0, false)

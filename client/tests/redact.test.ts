@@ -290,6 +290,75 @@ const poisonCases: Case[] = [
   },
 ]
 
+// A credential carried where no key names it. `IncomingMessage.rawHeaders` is a flat
+// `[name, value, …]` array, a header list is `[name, value]` tuples, and a sent response or an
+// outbound request keeps its whole head as one string in `_header`.
+const credentialCases: Case[] = [
+  {
+    name: 'redacts the value after a sensitive name in a flat header array',
+    input: () => ({
+      rawHeaders: ['Host', 'example.com', 'Authorization', 'Bearer x', 'Cookie', 'sid=1'],
+    }),
+    expected: {
+      rawHeaders: ['Host', 'example.com', 'Authorization', '[redacted]', 'Cookie', '[redacted]'],
+    },
+  },
+  {
+    name: 'redacts the value in a [name, value] header tuple',
+    input: () => [
+      ['set-cookie', 'sid=1'],
+      ['accept', 'json'],
+    ],
+    expected: [
+      ['set-cookie', '[redacted]'],
+      ['accept', 'json'],
+    ],
+  },
+  {
+    name: 'matches a header name however it is cased or padded',
+    input: () => [' X-API-KEY ', 'k1', 'PROXY-AUTHORIZATION', 'Basic abc'],
+    expected: [' X-API-KEY ', '[redacted]', 'PROXY-AUTHORIZATION', '[redacted]'],
+  },
+  {
+    // The redacted value is not then read as a header name: `password` here is a value.
+    name: 'judges each name by its own position, not by the value before it',
+    input: () => ['x-auth-token', 'password', 'host', 'example.com'],
+    expected: ['x-auth-token', '[redacted]', 'host', 'example.com'],
+  },
+  {
+    name: 'leaves an array without header names alone',
+    input: () => ['GET', '/api/bookings', 'accept', 'json'],
+    expected: ['GET', '/api/bookings', 'accept', 'json'],
+  },
+  {
+    name: 'redacts the value of each sensitive line in a raw HTTP head',
+    input: () =>
+      'GET / HTTP/1.1\r\nHost: a\r\nAuthorization: Bearer x\r\ncookie: sid=1\r\nSet-Cookie: s=2\r\n\r\n',
+    expected:
+      'GET / HTTP/1.1\r\nHost: a\r\nAuthorization: [redacted]\r\ncookie: [redacted]\r\nSet-Cookie: [redacted]\r\n\r\n',
+  },
+  {
+    name: 'redacts a sensitive header inside printed or serialised text',
+    input: () => `failed { cookie: 'sid=1' } and {"x-api-key":"k1"}`,
+    expected: `failed { cookie: [redacted]`,
+  },
+  {
+    name: 'redacts a Bearer credential in free text',
+    input: () => 'engine said no to Bearer eyJhbGciOi.J9.abc-_ today',
+    expected: 'engine said no to Bearer [redacted] today',
+  },
+  {
+    name: 'redacts a Basic credential in free text',
+    input: () => 'retrying with basic dXNlcjpwYXNz== once',
+    expected: 'retrying with basic [redacted] once',
+  },
+  {
+    name: 'leaves text that only mentions a header alone',
+    input: () => 'the cookie jar is empty',
+    expected: 'the cookie jar is empty',
+  },
+]
+
 const allCases = [
   ...keyCases,
   ...secretCases,
@@ -297,6 +366,7 @@ const allCases = [
   ...renderCases,
   ...hostileCases,
   ...poisonCases,
+  ...credentialCases,
 ]
 
 describe('redact', () => {

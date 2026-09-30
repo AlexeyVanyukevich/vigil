@@ -1,4 +1,4 @@
-import { liveSecrets, redact } from './redact.js'
+import { liveSecrets, redact, scrubCredentials } from './redact.js'
 
 /**
  * Exactly what `POST /ingest/events` accepts for one event. Kept in step with the server's
@@ -103,10 +103,11 @@ function describe(
   }
 }
 
+/** Configured secrets replaced wherever they occur, then credentials recognised by shape. */
 function scrubString(value: string, secrets: readonly string[]): string {
   let out = value
   for (const secret of secrets) out = out.split(secret).join('[redacted]')
-  return out
+  return scrubCredentials(out)
 }
 
 /** At most `max` UTF-16 units, never ending on the first half of a surrogate pair. */
@@ -245,9 +246,11 @@ export function toWireEvent(
     return {
       // The server refuses a blank type outright, and `name = ''` is a thing people write.
       type: /\S/.test(type) ? type : 'Error',
-      // A secret in a message or a stack is the likeliest way one escapes: `connect
-      // ECONNREFUSED` is harmless, `Bearer sk_live_…` in a fetch error is not. Scrubbed before
-      // the cut, so a cut can never leave half a secret behind.
+      // A secret in a message or a stack is the likeliest way one escapes. What is scrubbed:
+      // each configured secret, verbatim; the value of an `authorization`, `cookie`,
+      // `set-cookie`, `proxy-authorization` or `x-api-key` line; and a `Bearer` or `Basic`
+      // credential. Not a secret URL-encoded or JSON-escaped, nor a credential in any other
+      // shape. Scrubbed before the cut, so a cut cannot leave half a configured secret behind.
       message: cutChars(scrubString(described.message, live), LIMITS.messageLength),
       ...(described.stack === undefined
         ? {}

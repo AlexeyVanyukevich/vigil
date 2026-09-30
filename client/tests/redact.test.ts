@@ -320,10 +320,22 @@ const credentialCases: Case[] = [
     expected: [' X-API-KEY ', '[redacted]', 'PROXY-AUTHORIZATION', '[redacted]'],
   },
   {
-    // The redacted value is not then read as a header name: `password` here is a value.
-    name: 'judges each name by its own position, not by the value before it',
+    // Whether an element is a name is decided from what it was, not from what it became. Read
+    // as a value only, `password` would let a real name after it pass — see `Vary` below. The
+    // price is one redacted element too many, never one too few.
+    name: 'reads every element as a possible name, even one it redacted as a value',
     input: () => ['x-auth-token', 'password', 'host', 'example.com'],
-    expected: ['x-auth-token', '[redacted]', 'host', 'example.com'],
+    expected: ['x-auth-token', '[redacted]', '[redacted]', 'example.com'],
+  },
+  {
+    name: 'still redacts a Set-Cookie that follows Vary: Cookie',
+    input: () => ['Vary', 'Cookie', 'Set-Cookie', 'sid=LEAKME123'],
+    expected: ['Vary', 'Cookie', '[redacted]', '[redacted]'],
+  },
+  {
+    name: 'still redacts an Authorization that follows a header listing it',
+    input: () => ['Access-Control-Request-Headers', 'authorization', 'Authorization', 'Token abc'],
+    expected: ['Access-Control-Request-Headers', 'authorization', '[redacted]', '[redacted]'],
   },
   {
     name: 'leaves an array without header names alone',

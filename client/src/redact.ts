@@ -195,14 +195,13 @@ export function redact(value: unknown, secrets: readonly string[] = []): unknown
         const kept = Math.min(object.length, MAX_ENTRIES)
         let credentialValue = false
         for (let i = 0; i < kept; i += 1) {
-          if (credentialValue) {
-            // Not read as a name in its turn: a redacted value is not the next header's name.
-            items.push(PLACEHOLDER)
-            credentialValue = false
-            continue
-          }
           const item = read(object, i)
-          items.push(item === undefined ? '[unreadable]' : walk(item.value, depth + 1, false))
+          if (credentialValue) items.push(PLACEHOLDER)
+          else items.push(item === undefined ? '[unreadable]' : walk(item.value, depth + 1, false))
+          // Judged from what the element was, even when it was just redacted as a value: in
+          // `['Vary', 'Cookie', 'Set-Cookie', 'sid=…']` the value `Cookie` redacts the name
+          // `Set-Cookie`, and that name must still redact the cookie after it. The rule can
+          // redact one element too many; it cannot let a value through.
           credentialValue = typeof item?.value === 'string' && isCredentialName(item.value)
         }
         if (object.length > kept) items.push(`[${object.length - kept} more items]`)

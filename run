@@ -136,8 +136,8 @@ scenario_test() {
   need_node; need_deps; need_docker
   step "Server suite (Testcontainers starts its own Postgres)"
   npm run --workspace server test
-  # Task 9 adds the client package suite here. Naming the workspace before Task 9 creates it
-  # makes `./run test` fail with "No workspaces found".
+  step "Client suite (no server, no database)"
+  npm run --workspace client test
 }
 
 # No `scenario_test_ui` yet. `playwright test` needs `playwright.config.ts`, which Task 14
@@ -188,6 +188,7 @@ scenario_check() {
 
   step "Type-checking"
   ( cd server && npx tsc --noEmit )
+  ( cd client && npx tsc --noEmit )
   ok "Types clean"
 
   step "Tests"
@@ -208,7 +209,7 @@ ${BOLD}./run <scenario>${OFF}
   ${BOLD}dev${OFF} [--bg]     Postgres, migrations and the server
   ${BOLD}start${OFF} [--bg]   the built server on one port
   ${BOLD}stop${OFF}           stop whatever ${BOLD}dev --bg${OFF} or ${BOLD}start --bg${OFF} left running
-  ${BOLD}test${OFF}           the server suite
+  ${BOLD}test${OFF}           the server and client suites
   ${BOLD}check${OFF}          types, formatting, and the server suite
   ${BOLD}build${OFF}          compile the server
   ${BOLD}migrate${OFF}        apply migrations to the local database

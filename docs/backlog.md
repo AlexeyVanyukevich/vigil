@@ -184,8 +184,9 @@ same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
 ## The client cuts to the server's default caps, not to the caps the server runs with
 
-- Where: `client/src/payload.ts`, `LIMITS`; against `server/src/config.ts`, `MAX_STACK_BYTES`,
-  `MAX_CONTEXT_BYTES` and `MAX_EVENTS_PER_BATCH`
+- Where: `client/src/payload.ts`, `LIMITS`, and `client/src/transport.ts`, which splits a batch at
+  `LIMITS.eventsPerBatch`; against `server/src/config.ts`, `MAX_STACK_BYTES`, `MAX_CONTEXT_BYTES`
+  and `MAX_EVENTS_PER_BATCH`
 - Found: 2026-09-30, building the client's payload builder
 - Problem: the client restates the server's defaults (16,384-byte stack, 8,192-byte context, 100
   events per batch) because it may not import from `server/`. The server reads all three from its

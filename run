@@ -189,6 +189,8 @@ scenario_check() {
   step "Type-checking"
   ( cd server && npx tsc --noEmit )
   ( cd client && npx tsc --noEmit )
+  # Vitest strips types without checking them, and the config above covers only what ships.
+  ( cd client && npx tsc -p tsconfig.test.json )
   ok "Types clean"
 
   step "Tests"

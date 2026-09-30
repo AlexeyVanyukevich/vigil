@@ -412,4 +412,56 @@ describe('the self recorder, called directly', () => {
       expect(rows[0]?.count).toBe(2)
     })
   })
+
+  // Ruling 29: a write started by one case must not land in the next case's database, and one
+  // in flight at shutdown must not be lost.
+  describe('drain', () => {
+    it('waits for every write in flight', async () => {
+      const { recorder } = recorderWith()
+      recorder.record(new Error('first in flight'), {})
+      recorder.record(new Error('second in flight'), {})
+      await recorder.drain()
+      // No polling: once drained, both are stored. Events, not titles: thrown from the same
+      // place, the two group into one issue.
+      const events = await db().selectFrom('events').select('message').orderBy('message').execute()
+      expect(events.map((event) => event.message)).toEqual(['first in flight', 'second in flight'])
+    })
+
+    it('settles, never rejects, when a write in flight fails', async () => {
+      const { recorder, warnings } = recorderWith()
+      recorder.record(new Error('context too large'), OVERSIZE_CONTEXT)
+      recorder.record(hostileError(), {})
+      await expect(recorder.drain()).resolves.toBeUndefined()
+      expect(warnings).toEqual(['could not record our own error', 'could not record our own error'])
+    })
+  })
+})
+
+describe('closing the app', () => {
+  it('waits for its own writes before it finishes', async () => {
+    const closing = await buildTestApp({
+      routes: (instance) => {
+        instance.get('/api/boom', async () => {
+          throw new Error('the database went away')
+        })
+      },
+    })
+    const response = await closing.inject({ method: 'GET', url: '/api/boom', cookies })
+    expect(response.statusCode).toBe(500)
+    await closing.close()
+    // No polling: close does not return while the write is still in flight.
+    expect(await titles()).toEqual([BOOM])
+  })
+
+  it('still closes when a write in flight fails', async () => {
+    const closing = await buildTestApp({
+      routes: (instance) => {
+        instance.get('/api/hostile', async () => {
+          throw hostileError()
+        })
+      },
+    })
+    await closing.inject({ method: 'GET', url: '/api/hostile', cookies })
+    await expect(closing.close()).resolves.toBeUndefined()
+  })
 })

@@ -10,7 +10,7 @@ import { registerErrorHandler } from './shared/errors.js'
 import { registerAuth } from './modules/auth/auth.routes.js'
 import { registerIngest } from './modules/ingest/ingest.routes.js'
 import { IngestService } from './modules/ingest/ingest.service.js'
-import { createSelfRecorder } from './self/record.js'
+import { createSelfRecorder, type SelfRecorder } from './self/record.js'
 import { registerIssues } from './modules/issues/issue.routes.js'
 import { registerApps } from './modules/apps/app.routes.js'
 
@@ -23,6 +23,8 @@ declare module 'fastify' {
   interface FastifyInstance {
     db: Kysely<Database>
     config: Config
+    /** §13's recorder, exposed so whoever owns `db` can drain it before destroying `db`. */
+    selfRecorder: SelfRecorder
   }
 }
 
@@ -46,16 +48,21 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     maxContextBytes: deps.config.maxContextBytes,
   })
 
-  registerErrorHandler(
-    app,
-    createSelfRecorder({
-      db: deps.db,
-      ingest,
-      environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
-      maxStackBytes: deps.config.maxStackBytes,
-      log: app.log,
-    }),
-  )
+  const selfRecorder = createSelfRecorder({
+    db: deps.db,
+    ingest,
+    environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+    maxStackBytes: deps.config.maxStackBytes,
+    log: app.log,
+  })
+  app.decorate('selfRecorder', selfRecorder)
+  registerErrorHandler(app, selfRecorder)
+
+  // A 500 answered just before close is still being written; close waits for it rather than
+  // lose it. `drain()` never rejects, so a failed write cannot fail the close.
+  app.addHook('onClose', async () => {
+    await selfRecorder.drain()
+  })
 
   app.get('/api/health', { config: { public: true } }, async () => ({ status: 'ok' }))
 

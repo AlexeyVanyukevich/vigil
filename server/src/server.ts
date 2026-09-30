@@ -6,7 +6,11 @@ const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
 const app = await buildApp({ config, db })
 
+// Fastify runs `onClose` hooks in reverse order of registration, so this one runs before the
+// drain `buildApp` registered. Drained here as well, explicitly: destroying the pool first would
+// fail every self-recorded write still in flight (§13).
 app.addHook('onClose', async () => {
+  await app.selfRecorder.drain()
   await db.destroy()
 })
 

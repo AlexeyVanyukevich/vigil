@@ -15,6 +15,11 @@ export const STACK_TRUNCATION_MARKER = '    … (truncated by vigil)'
 export interface SelfRecorder {
   /** Returns nothing, never throws and never rejects. The caller is already handling a failure. */
   record(error: unknown, context: Record<string, unknown>): void
+  /**
+   * Resolves once every write in flight has settled, whatever its outcome. Never rejects: it is
+   * awaited on close, and a close that failed over a lost report would be the worse outcome.
+   */
+  drain(): Promise<void>
 }
 
 export interface SelfRecorderDeps {
@@ -37,6 +42,10 @@ export function createSelfRecorder(deps: SelfRecorderDeps): SelfRecorder {
   // the async context of the write rather than a process-wide flag, which would also drop every
   // unrelated failure that lands while one is being written: exactly when failures come in bunches.
   const writing = new AsyncLocalStorage<true>()
+
+  // Every write not yet settled. Each promise here has already had its failure caught below, so
+  // none of them can reject.
+  const inFlight = new Set<Promise<void>>()
 
   async function write(error: unknown, context: Record<string, unknown>): Promise<void> {
     // Looked up on every write rather than cached: an unexpected 500 is rare, and a cached id
@@ -84,7 +93,7 @@ export function createSelfRecorder(deps: SelfRecorderDeps): SelfRecorder {
       // rejection rather than a throw — `String()` on a hostile value, a getter on the error, the
       // database. Swallowed on purpose: this runs while the process is already answering a 500,
       // and throwing would replace one failure with two, or crash the process.
-      writing
+      const settled = writing
         .run(true, () => write(error, context))
         .catch((failure: unknown) => {
           try {
@@ -93,6 +102,16 @@ export function createSelfRecorder(deps: SelfRecorderDeps): SelfRecorder {
             // Nothing left to tell.
           }
         })
+      inFlight.add(settled)
+      void settled.finally(() => inFlight.delete(settled))
+    },
+
+    async drain(): Promise<void> {
+      // Looped, because a write can start while earlier ones are being awaited: a request that
+      // was still in flight when close began can fail and record.
+      while (inFlight.size > 0) {
+        await Promise.allSettled([...inFlight])
+      }
     },
   }
 }

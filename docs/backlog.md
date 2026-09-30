@@ -3,6 +3,19 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## The client cuts to the server's default caps, not to the caps the server runs with
+
+- Where: `client/src/payload.ts`, `LIMITS`; against `server/src/config.ts`, `MAX_STACK_BYTES`,
+  `MAX_CONTEXT_BYTES` and `MAX_EVENTS_PER_BATCH`
+- Found: 2026-09-30, building the client's payload builder
+- Problem: the client restates the server's defaults (16,384-byte stack, 8,192-byte context, 100
+  events per batch) because it may not import from `server/`. The server reads all three from its
+  environment. Start the server with `MAX_STACK_BYTES=4096` and report an error whose stack is 8 KB:
+  the client sends it as within the cap, and the server refuses it with a 413.
+- Impact: an operator who lowers a cap makes every client that sends near the old one lose whole
+  batches — each refused event takes up to 99 others with it — and nothing on the client side says
+  why. The server's caps would have to reach the client, as configuration or in a response.
+
 ## The ingest body limit is safe only while every key is a server key
 
 - Where: `server/src/modules/ingest/ingest.body-limit.ts`, and the rate limit planned for Slice 4

@@ -3,6 +3,20 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## The session slide stamps `last_seen_at` from the wall clock, and its test flakes on clock skew
+
+- Where: `server/src/modules/auth/session.repository.ts`, `slideSession`; its test in
+  `server/tests/integration/auth.test.ts`, "the session slide > moves both after the hour"
+- Found: 2026-09-30, running `./run check` at the end of the client package task
+- Problem: `slideSession` writes `last_seen_at: new Date()`, Node's clock, not the clock injected
+  into `AuthService`. The test seeds `last_seen_at` from the column default, Postgres's `now()`,
+  which reads the Docker VM's clock. When that clock runs a few milliseconds ahead of the host, the
+  slide writes an earlier time than the seed and the `toBeGreaterThan` fails:
+  `expected 1790780303725 to be greater than 1790780303731`. It failed once in `./run check` and once
+  in `./run test` in a row, then passed on five straight reruns.
+- Impact: an intermittent red gate that has nothing to do with the change being checked. The
+  injected clock also does not govern `last_seen_at`, so no test can pin the value the slide writes.
+
 ## The client cuts to the server's default caps, not to the caps the server runs with
 
 - Where: `client/src/payload.ts`, `LIMITS`; against `server/src/config.ts`, `MAX_STACK_BYTES`,

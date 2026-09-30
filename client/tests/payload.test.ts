@@ -297,6 +297,8 @@ interface SecretCase {
   name: string
   error: () => unknown
   context?: Record<string, unknown>
+  /** `[SECRET]` unless a row names its own. */
+  secrets?: readonly string[]
   expected: Partial<Record<keyof WireEvent, unknown>>
 }
 
@@ -337,6 +339,13 @@ const secretCases: SecretCase[] = [
     error: () => new Error('x'),
     context: { vigilFingerprint: `engine-${SECRET}` },
     expected: { fingerprint: '[redacted]' },
+  },
+  {
+    // Replaced in list order, the shorter secret would cut the longer one and leave its tail.
+    name: 'scrubs overlapping configured secrets whole, whichever is listed first',
+    error: () => new Error('key=bk_live_9f8e7d6c'),
+    secrets: ['bk_live', 'bk_live_9f8e7d6c'],
+    expected: { message: 'key=[redacted]' },
   },
 ]
 
@@ -471,10 +480,10 @@ describe('toWireEvent', () => {
     expect(event.fingerprint).toBe(expected.fingerprint)
   })
 
-  it.each(secretCases)('$name', ({ error, context, expected }) => {
-    const event = toWireEvent(error(), context, [SECRET])
+  it.each(secretCases)('$name', ({ error, context, secrets = [SECRET], expected }) => {
+    const event = toWireEvent(error(), context, secrets)
     expect(event).toMatchObject(expected)
-    expect(JSON.stringify(event)).not.toContain(SECRET)
+    for (const secret of secrets) expect(JSON.stringify(event)).not.toContain(secret)
   })
 
   it.each(capCases)('$name', ({ error, context, expected }) => {

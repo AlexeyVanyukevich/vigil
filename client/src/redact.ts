@@ -30,6 +30,9 @@ function isSensitiveKey(key: string): boolean {
 /**
  * The configured secrets worth matching: trimmed, and without the blank ones, which would
  * otherwise match every string there is. Tolerates a caller that passes something else.
+ *
+ * Longest first, so a secret that contains another is replaced before the shorter one can cut
+ * it and leave its tail behind.
  */
 export function liveSecrets(secrets: readonly string[] | undefined): string[] {
   if (!Array.isArray(secrets)) return []
@@ -37,6 +40,7 @@ export function liveSecrets(secrets: readonly string[] | undefined): string[] {
     .filter((secret): secret is string => typeof secret === 'string')
     .map((secret) => secret.trim())
     .filter((secret) => secret !== '')
+    .sort((a, b) => b.length - a.length)
 }
 
 /**

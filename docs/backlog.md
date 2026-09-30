@@ -3,6 +3,16 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## A collapsed run stops counting at 1,000,000 until the next flush
+
+- Where: `client/src/queue.ts`, `EventQueue.add`
+- Found: 2026-09-30, building the client's queue. A shortcut taken on purpose.
+- Problem: the server's schema refuses a `count` over 1,000,000, and with it the whole batch, so a
+  run is held at the cap. Throw one error 1,200,000 times between two flushes and one event with
+  `count: 1000000` is sent; the other 200,000 are not counted anywhere, not even in `dropped`.
+- Impact: the dashboard undercounts only the hottest loops, and never says it did. Starting a
+  second event for the same failure once the first is full would keep the count honest.
+
 ## A sensitive header line that already holds a `[redacted]` is skipped, and the rest is sent
 
 - Where: `client/src/redact.ts`, `CREDENTIAL_LINE`, the lookahead `(?!["']?\[redacted\])`

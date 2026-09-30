@@ -31,6 +31,8 @@ export const LIMITS = {
   messageLength: 4_000,
   typeLength: 200,
   fingerprintLength: 200,
+  /** The most one collapsed event may stand for. Fixed in the server's schema, not configured. */
+  countMax: 1_000_000,
 } as const
 
 /** Recognised in a context and lifted out as §7's escape hatch rather than sent as data. */

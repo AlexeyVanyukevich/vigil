@@ -365,6 +365,21 @@ const credentialCases: Case[] = [
     expected: 'retrying with basic [redacted] once',
   },
   {
+    name: 'redacts a Bearer credential on the line after the scheme',
+    input: () => 'Bearer\ntok_9a8b7c6d',
+    expected: 'Bearer\n[redacted]',
+  },
+  {
+    name: 'redacts a Bearer credential after a colon',
+    input: () => 'Bearer: tok_9a8b7c6d',
+    expected: 'Bearer: [redacted]',
+  },
+  {
+    name: 'redacts a quoted Bearer or Basic credential',
+    input: () => `Bearer "tok_9a8b7c6d" and Basic 'dXNlcjpwYXNz'`,
+    expected: `Bearer "[redacted]" and Basic '[redacted]'`,
+  },
+  {
     name: 'leaves text that only mentions a header alone',
     input: () => 'the cookie jar is empty',
     expected: 'the cookie jar is empty',

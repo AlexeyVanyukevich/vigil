@@ -362,6 +362,14 @@ const secretCases: SecretCase[] = [
     expected: { message: 'upstream failed\ncookie: [redacted]\nhost: a' },
   },
   {
+    // A newline may separate a scheme from its credential, but the next line of a stack is a
+    // frame, and a frame whose `at` became `[redacted]` is no longer read as one.
+    name: 'leaves the first frame alone after a message that ends in a scheme name',
+    error: () => new Error('auth scheme was basic'),
+    secrets: [],
+    expected: { stack: expect.stringMatching(/^Error: auth scheme was basic\n {4}at /) },
+  },
+  {
     // Replaced in list order, the shorter secret would cut the longer one and leave its tail.
     name: 'scrubs overlapping configured secrets whole, whichever is listed first',
     error: () => new Error('key=bk_live_9f8e7d6c'),

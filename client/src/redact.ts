@@ -69,8 +69,12 @@ const CREDENTIAL_LINE = new RegExp(
   'gim',
 )
 
-/** An RFC 6750 bearer token or an RFC 7617 basic credential, wherever it is written. */
-const CREDENTIAL_SCHEME = /\b(bearer|basic)([ \t]+)[A-Za-z0-9\-._~+/]+=*/gi
+/**
+ * An RFC 6750 bearer token or an RFC 7617 basic credential, wherever it is written: after a
+ * space, a newline, a colon or a quote. Not the word `at` on the next line, which is the first
+ * frame of a stack whose message ended in the scheme's name.
+ */
+const CREDENTIAL_SCHEME = /\b(bearer|basic)([\s:"']+)(?!at\s)[A-Za-z0-9\-._~+/]+=*/gi
 
 /**
  * Credentials that need no configuration to recognise: the value of a sensitive header line,

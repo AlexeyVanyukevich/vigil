@@ -3,6 +3,73 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## A sensitive header line that already holds a `[redacted]` is skipped, and the rest is sent
+
+- Where: `client/src/redact.ts`, `CREDENTIAL_LINE`, the lookahead `(?!["']?\[redacted\])`
+- Found: 2026-09-30, re-reviewing the client package's redaction. A fix was written and deferred
+  by the owner; it is described here so it can be restored.
+- Problem: `toWireEvent` replaces configured secrets before the header rule runs. With `a`
+  configured, the message `{"cookie":"a; csrf=tok_csrf_91x"}` becomes
+  `{"cookie":"[redacted]; csrf=tok_csrf_91x"}`, the lookahead sees `"[redacted]` and skips the line,
+  and the CSRF token is sent. With a space after the colon the line is cleared instead, so the rule
+  is unreliable both ways.
+- Impact: whatever follows a configured secret on a cookie or authorization line crosses the wire.
+- Fix: delete the lookahead, so a sensitive line is always cleared to its end. Add that exact input
+  as a `payload.test.ts` secret row with `absent: ['tok_csrf_91x']` (not `a`: `[redacted]` contains
+  an `a`), and expect the thrown-object row to render `{"headers":{"authorization":[redacted]`.
+
+## A folded header's continuation line is not scrubbed
+
+- Where: `client/src/redact.ts`, `CREDENTIAL_LINE`
+- Found: 2026-09-30, re-reviewing the client package's redaction
+- Problem: the rule clears a sensitive header to the end of its line. Obsolete line folding (RFC 9112
+  §5.2) continues a value on the next line after whitespace: `Cookie: a=1\r\n b=SECRET` becomes
+  `Cookie: [redacted]\r\n b=SECRET`.
+- Impact: the second half of a folded cookie or authorization header is sent. Node rejects folding
+  on incoming requests, so it reaches a context mainly through raw text logged from elsewhere.
+
+## A header list printed into a string, or JSON escaped twice, carries its credential out
+
+- Where: `client/src/redact.ts`, `CREDENTIAL_LINE` and the array rule in `walk`
+- Found: 2026-09-30, re-reviewing the client package's redaction
+- Problem: the array rule works on arrays and the line rule needs a colon after the name. Neither
+  sees `[ 'Cookie', 'SECRET' ]`, a `rawHeaders` array printed into a message, nor
+  `{\"cookie\":\"SECRET\"}`, JSON serialised inside JSON. Both pass unchanged.
+- Impact: an error message that embeds printed headers or doubly serialised JSON sends the cookie.
+
+## A credential in an environment-style assignment is not recognised
+
+- Where: `client/src/redact.ts`, `CREDENTIAL_LINE`
+- Found: 2026-09-30, re-reviewing the client package's redaction
+- Problem: the line rule requires a colon. `HTTP_COOKIE=SECRET`, the CGI form of the header, passes
+  unchanged.
+- Impact: an error that prints a CGI environment or a `.env`-style dump sends the cookie.
+
+## A Bearer or Basic credential is scrubbed only up to its first unusual character
+
+- Where: `client/src/redact.ts`, `CREDENTIAL_SCHEME`
+- Found: 2026-09-30, re-reviewing the client package's redaction
+- Problem: the credential is matched with the RFC 6750 token characters, so the match stops at the
+  first character outside them. `Bearer abc:SECRET` becomes `Bearer [redacted]:SECRET`, and
+  `Bearer abc%2FSECRET` becomes `Bearer [redacted]%2FSECRET`.
+- Impact: a malformed or URL-encoded credential sends everything after its first unusual character.
+
+## A sensitive name past the first 4,096 characters of a key is not seen
+
+- Where: `client/src/redact.ts`, `walk`, `isSensitiveKey(head(key))`
+- Found: 2026-09-30, re-reviewing the client package's redaction
+- Problem: only the head of a key is checked, to bound the work on huge keys. A key of 5,000 `x`
+  followed by `password` is not recognised, and its value is sent: `…":"SECRET"`.
+- Impact: small, since such keys are contrived, but the value of one is sent in full.
+
+## Configured secrets that overlap without one containing the other leave a tail
+
+- Where: `client/src/payload.ts`, `scrubString`; `client/src/redact.ts`, `liveSecrets`
+- Found: 2026-09-30, re-reviewing the client package's redaction
+- Problem: longest-first order fixes a secret contained in another, not two that overlap. With
+  `abcXYZ` and `XYZdef` configured, `abcXYZdef` becomes `[redacted]def`.
+- Impact: part of the second secret is sent. Replacing the union of all match ranges would fix it.
+
 ## `./run` cannot start on a checkout whose `node_modules` predates the kit
 
 - Where: `run`, the bootstrap above `source node_modules/dev-kit/sh/lib.sh`

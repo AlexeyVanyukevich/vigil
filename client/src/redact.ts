@@ -21,6 +21,13 @@ const MAX_DEPTH = 12
 const MAX_ENTRIES = 100
 /** Objects visited in one call. The host's error path pays for every one of them. */
 const MAX_OBJECTS = 1_000
+/** Per string, in UTF-16 units. A longer one is cut, and says how much was cut. */
+const MAX_STRING = 4_096
+/**
+ * Characters scanned in one call. Objects are counted by `MAX_OBJECTS`, but a string is not an
+ * object, and one shared string referenced from thousands of places is scanned at every one.
+ */
+const MAX_SCANNED = 256 * 1_024
 
 function isSensitiveKey(key: string): boolean {
   const flat = key.toLowerCase().replace(/[-_\s]/g, '')
@@ -76,6 +83,13 @@ export function scrubCredentials(text: string): string {
     .replace(CREDENTIAL_SCHEME, `$1$2${PLACEHOLDER}`)
 }
 
+/** At most `max` UTF-16 units, never ending on the first half of a surrogate pair. */
+export function cutChars(value: string, max: number): string {
+  if (value.length <= max) return value
+  const code = value.charCodeAt(max - 1)
+  return value.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max)
+}
+
 /** One property of something hostile, or `undefined` if reading it throws. */
 function read(owner: object, key: string | number): { value: unknown } | undefined {
   try {
@@ -113,9 +127,27 @@ export function redact(value: unknown, secrets: readonly string[] = []): unknown
   const live = liveSecrets(secrets)
   const seen = new WeakSet<object>()
   let budget = MAX_OBJECTS
+  let scanBudget = MAX_SCANNED
+  // `live` is sorted longest first.
+  const overhang = Math.max((live[0]?.length ?? 0) - 1, 0)
 
-  const scrub = (text: string): string =>
-    live.some((secret) => text.includes(secret)) ? PLACEHOLDER : scrubCredentials(text)
+  function scrub(text: string): string {
+    if (scanBudget <= 0) return '[truncated]'
+    const long = text.length > MAX_STRING
+    // Scanned past the cut by one secret's length less one, so a secret that starts before the
+    // cut is seen whole. Cut first, it would be half a secret, and half a secret matches nothing.
+    const scanned = long ? text.slice(0, MAX_STRING + overhang) : text
+    scanBudget -= scanned.length
+    if (live.some((secret) => scanned.includes(secret))) return PLACEHOLDER
+    if (!long) return scrubCredentials(text)
+    // A credential pattern cut short still matches what is left of it, so it is applied after.
+    const kept = cutChars(text, MAX_STRING)
+    return `${scrubCredentials(kept)}… (${text.length - kept.length} more characters)`
+  }
+
+  /** Enough of `text` for `scrub` to judge and cut, without copying the rest. */
+  const head = (text: string): string =>
+    text.length > MAX_STRING + overhang ? text.slice(0, MAX_STRING + overhang) : text
 
   function walk(node: unknown, depth: number, underConstructor: boolean): unknown {
     try {
@@ -142,7 +174,9 @@ export function redact(value: unknown, secrets: readonly string[] = []): unknown
       if (object instanceof Date) {
         return Number.isNaN(object.getTime()) ? 'Invalid Date' : object.toISOString()
       }
-      if (object instanceof Error) return scrub(`${String(object.name)}: ${String(object.message)}`)
+      if (object instanceof Error) {
+        return scrub(`${head(String(object.name))}: ${head(String(object.message))}`)
+      }
       if (ArrayBuffer.isView(object) || object instanceof ArrayBuffer) {
         return `[binary ${object.byteLength} bytes]`
       }
@@ -181,7 +215,7 @@ export function redact(value: unknown, secrets: readonly string[] = []): unknown
         // Either shape makes Fastify refuse the whole batch with a 400, and a context holding a
         // parsed request body is all it takes to carry one.
         if (key === '__proto__' || (underConstructor && key === 'prototype')) continue
-        out[scrub(key)] = isSensitiveKey(key)
+        out[scrub(key)] = isSensitiveKey(head(key))
           ? PLACEHOLDER
           : walkProperty(object, key, depth, key === 'constructor')
       }

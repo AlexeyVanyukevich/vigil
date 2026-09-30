@@ -1,4 +1,4 @@
-import { liveSecrets, redact, scrubCredentials } from './redact.js'
+import { cutChars, liveSecrets, redact, scrubCredentials } from './redact.js'
 
 /**
  * Exactly what `POST /ingest/events` accepts for one event. Kept in step with the server's
@@ -108,13 +108,6 @@ function scrubString(value: string, secrets: readonly string[]): string {
   let out = value
   for (const secret of secrets) out = out.split(secret).join('[redacted]')
   return scrubCredentials(out)
-}
-
-/** At most `max` UTF-16 units, never ending on the first half of a surrogate pair. */
-function cutChars(value: string, max: number): string {
-  if (value.length <= max) return value
-  const code = value.charCodeAt(max - 1)
-  return value.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max)
 }
 
 /** The longest prefix of `value` within `maxBytes` of UTF-8, never splitting a code point. */

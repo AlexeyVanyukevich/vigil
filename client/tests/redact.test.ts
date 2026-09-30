@@ -359,6 +359,44 @@ const credentialCases: Case[] = [
   },
 ]
 
+// Strings are cut at 4,096 characters. The context that reaches the wire is 8 KB at most, and
+// scanning a longer string only costs the host time on every throw.
+const lengthCases: Case[] = [
+  {
+    name: 'keeps a string at the cap whole',
+    input: () => 'x'.repeat(4_096),
+    expected: 'x'.repeat(4_096),
+  },
+  {
+    name: 'cuts a longer string and says how much it cut',
+    input: () => 'x'.repeat(5_000),
+    expected: `${'x'.repeat(4_096)}… (904 more characters)`,
+  },
+  {
+    // Cut first and scanned second, only `bk_` would be left, and nothing would match it.
+    name: 'still finds a configured secret that straddles the cut',
+    input: () => `${'a'.repeat(4_093)}bk_live_secret tail`,
+    secrets: ['bk_live_secret'],
+    expected: '[redacted]',
+  },
+  {
+    name: 'does not redact a string for a secret wholly past the cut',
+    input: () => `${'a'.repeat(4_096)}bk_live_secret`,
+    secrets: ['bk_live_secret'],
+    expected: `${'a'.repeat(4_096)}… (14 more characters)`,
+  },
+  {
+    name: 'never cuts a string between the two halves of a surrogate pair',
+    input: () => `${'a'.repeat(4_095)}😀b`,
+    expected: `${'a'.repeat(4_095)}… (3 more characters)`,
+  },
+  {
+    name: 'cuts a long key the same way',
+    input: () => ({ ['k'.repeat(5_000)]: 1 }),
+    expected: { [`${'k'.repeat(4_096)}… (904 more characters)`]: 1 },
+  },
+]
+
 const allCases = [
   ...keyCases,
   ...secretCases,
@@ -367,6 +405,7 @@ const allCases = [
   ...hostileCases,
   ...poisonCases,
   ...credentialCases,
+  ...lengthCases,
 ]
 
 describe('redact', () => {
@@ -414,5 +453,33 @@ describe('redact', () => {
     const scrubbed = redact(graph) as unknown[]
     expect(scrubbed[0]).toEqual(graph[0])
     expect(scrubbed[19]).toBe('[truncated]')
+  })
+
+  // Objects are counted, and strings were not: a shared string is scanned again at every place
+  // it is referenced. One call reads a bounded number of characters, and then stops.
+  it('stops after a bounded number of characters', () => {
+    const scrubbed = redact(Array.from({ length: 99 }, () => 'x'.repeat(5_000))) as unknown[]
+    expect(scrubbed[0]).toBe(`${'x'.repeat(4_096)}… (904 more characters)`)
+    expect(scrubbed[98]).toBe('[truncated]')
+  })
+
+  // `toWireEvent` runs on every throw, before collapsing, so a hot loop pays this every time.
+  // The bound is generous so it does not flake; the input took eleven seconds before the fix.
+  it('redacts a huge string shared by thousands of leaves in bounded time', () => {
+    const huge = 'x'.repeat(1_000_000)
+    const graph = Array.from({ length: 50 }, () => Array<string>(99).fill(huge))
+    const started = performance.now()
+    redact({ graph }, ['bk_live_secret'])
+    expect(performance.now() - started).toBeLessThan(1_500)
+  })
+
+  // A key is checked against `ALWAYS_REDACTED` on every object that has it, and lowercasing a
+  // whole huge key each time costs seconds. Only the part that could be sent is examined.
+  it('redacts a huge key shared by hundreds of objects in bounded time', () => {
+    const key = 'k'.repeat(20_000_000)
+    const graph = Array.from({ length: 9 }, () => Array.from({ length: 99 }, () => ({ [key]: 1 })))
+    const started = performance.now()
+    redact(graph, ['bk_live_secret'])
+    expect(performance.now() - started).toBeLessThan(1_500)
   })
 })

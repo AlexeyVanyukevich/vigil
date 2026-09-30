@@ -447,14 +447,20 @@ const capCases: CapCase[] = [
   {
     name: 'leaves a context at exactly the cap alone',
     error: () => new Error('x'),
-    // `{"pad":"…"}` is ten bytes of punctuation around the padding.
-    context: () => ({ pad: 'x'.repeat(8_192 - 10) }),
-    expected: (event) => expect(event.context).toEqual({ pad: 'x'.repeat(8_182) }),
+    // `{"a":"…","b":"…"}` is fifteen bytes of punctuation around the padding. Two strings,
+    // since the redactor cuts any one string at 4,096 characters before the context is sized.
+    context: () => ({ a: 'x'.repeat(4_096), b: 'x'.repeat(8_192 - 15 - 4_096) }),
+    expected: (event) =>
+      expect(event.context).toEqual({ a: 'x'.repeat(4_096), b: 'x'.repeat(4_081) }),
   },
   {
     name: 'keeps the small context entries and marks the one too large to send',
     error: () => new Error('x'),
-    context: () => ({ route: '/pay', body: 'x'.repeat(20_000), user: 'u1' }),
+    context: () => ({
+      route: '/pay',
+      body: { p1: 'x'.repeat(4_000), p2: 'x'.repeat(4_000), p3: 'x'.repeat(4_000) },
+      user: 'u1',
+    }),
     expected: (event) =>
       expect(event.context).toEqual({
         route: '/pay',

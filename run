@@ -193,6 +193,7 @@ scenario_check() {
 
   step "Tests"
   npm run --workspace server test
+  npm run --workspace client test
 }
 
 scenario_build() {
@@ -210,7 +211,7 @@ ${BOLD}./run <scenario>${OFF}
   ${BOLD}start${OFF} [--bg]   the built server on one port
   ${BOLD}stop${OFF}           stop whatever ${BOLD}dev --bg${OFF} or ${BOLD}start --bg${OFF} left running
   ${BOLD}test${OFF}           the server and client suites
-  ${BOLD}check${OFF}          types, formatting, and the server suite
+  ${BOLD}check${OFF}          types, formatting, and the server and client suites
   ${BOLD}build${OFF}          compile the server
   ${BOLD}migrate${OFF}        apply migrations to the local database
   ${BOLD}owner:password${OFF} set the owner's password (also signs every device out)

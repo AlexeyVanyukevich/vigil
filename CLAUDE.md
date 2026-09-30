@@ -24,6 +24,7 @@ restating it here.
 @node_modules/dev-kit/rules/documentation.md
 @node_modules/dev-kit/rules/writing.md
 @node_modules/dev-kit/rules/review.md
+@node_modules/dev-kit/rules/backlog.md
 
 Two rules are vigil's own and are not in the shared kit:
 

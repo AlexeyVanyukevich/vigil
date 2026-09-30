@@ -3,6 +3,26 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## `./run` cannot start on a checkout whose `node_modules` predates the kit
+
+- Where: `run`, the bootstrap above `source node_modules/dev-kit/sh/lib.sh`
+- Found: 2026-09-30, adopting dev-kit in a sibling project
+- Problem: the bootstrap tests `[ -d node_modules ]`, so a checkout that installed its
+  dependencies before `dev-kit` became one skips `npm install` and then fails to source a file
+  that is not there. dev-kit's README, from 1.2.1, tests for `node_modules/dev-kit/sh/lib.sh`.
+- Impact: `./run` dies with "No such file or directory" instead of installing the missing kit,
+  on any machine that pulls the adoption onto an existing install.
+
+## dev-kit is installed from a sibling directory, so a fresh clone cannot install
+
+- Where: `package.json`, `"dev-kit": "file:../dev-kit"`, and the lockfile's link to `../dev-kit`
+- Found: 2026-09-30, adopting dev-kit in a sibling project
+- Problem: the `file:` specifier resolves only where a dev-kit checkout sits beside this one.
+  The kit's documented channels are the private registry or its git host at a pinned tag, such
+  as `github:AlexeyVanyukevich/dev-kit#v1.2.0`, which a sibling project installs without trouble.
+- Impact: a clone on another machine, a CI runner or a Docker build cannot run `npm install`,
+  and edits to the local dev-kit checkout reach this project unversioned.
+
 ## A boxed string reaches the wire one character per key, past secret matching
 
 - Where: `client/src/redact.ts`, `redact`, the object branch of `walk`

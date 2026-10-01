@@ -591,6 +591,23 @@ describe('close', () => {
     installed = undefined
   })
 
+  it('does not reject when the hooks cannot be removed', async () => {
+    const { vigil } = setup({ log: () => {} })
+    const ours = { u: hook('uncaughtException'), r: hook('unhandledRejection') }
+    vi.spyOn(process, 'off').mockImplementation(() => {
+      throw new Error('process.off is broken')
+    })
+
+    try {
+      await expect(vigil.close()).resolves.toBeUndefined()
+    } finally {
+      vi.mocked(process.off).mockRestore()
+      process.off('uncaughtException', ours.u)
+      process.off('unhandledRejection', ours.r)
+      installed = undefined
+    }
+  })
+
   it('accepts a capture after closing without throwing or sending', async () => {
     const { vigil, fetchImpl } = setup()
     await vigil.close()
@@ -646,6 +663,35 @@ describe('configuration it cannot report with', () => {
     expect(() => vigil!.captureError(new Error('boom'))).not.toThrow()
     await expect(vigil!.flush()).resolves.toBeUndefined()
     expect(warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads options a class instance holds as getters, not only own properties', async () => {
+    const sent: Sent[] = []
+    class Settings {
+      get url() {
+        return BASE.url
+      }
+      get key() {
+        return BASE.key
+      }
+      get app() {
+        return BASE.app
+      }
+      get environment() {
+        return BASE.environment
+      }
+      get fetch() {
+        return (async (_url: string, init?: RequestInit) => {
+          sent.push(JSON.parse(init?.body as string) as Sent)
+          return new Response(null, { status: 202 })
+        }) as unknown as typeof fetch
+      }
+    }
+
+    installed = install(new Settings())
+    installed.captureError(new Error('boom'))
+    await installed.flush()
+    expect(sent[0]!.events[0]).toMatchObject({ message: 'boom' })
   })
 
   it('reports through the log option when one is given', () => {

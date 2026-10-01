@@ -52,6 +52,21 @@ const DEFAULTS = {
   fatalFlushMs: 1_000,
 } as const
 
+const OPTION_NAMES = [
+  'url',
+  'key',
+  'app',
+  'environment',
+  'secrets',
+  'maxQueue',
+  'flushIntervalMs',
+  'timeoutMs',
+  'fatalFlushMs',
+  'exitOnUncaught',
+  'fetch',
+  'log',
+] as const satisfies ReadonlyArray<keyof VigilOptions>
+
 /** The server refuses a batch whose environment is blank or longer than this (§6). */
 const MAX_ENVIRONMENT_LENGTH = 64
 
@@ -145,8 +160,12 @@ interface Settings {
  * Returns why it cannot report instead of throwing.
  */
 function read(options: VigilOptions): { settings: Settings } | { unusable: string; log: Log } {
-  const raw: Partial<Record<keyof VigilOptions, unknown>> =
-    typeof options === 'object' && options !== null ? { ...options } : {}
+  // Read by name rather than spread, which copies own properties only and so would miss the
+  // getters of a class instance.
+  const raw: Partial<Record<keyof VigilOptions, unknown>> = {}
+  if (typeof options === 'object' && options !== null) {
+    for (const name of OPTION_NAMES) raw[name] = options[name]
+  }
 
   const log: Log = typeof raw.log === 'function' ? (raw.log as Log) : defaultLog
   const label = nonBlank(raw.app) ? raw.app : 'unnamed application'
@@ -483,10 +502,15 @@ function start(settings: Settings): Vigil {
     async close(): Promise<void> {
       if (closed) return
       closed = true
-      release()
-      clearInterval(timer)
-      process.off('uncaughtException', onUncaught)
-      process.off('unhandledRejection', onRejection)
+      try {
+        release()
+        clearInterval(timer)
+        process.off('uncaughtException', onUncaught)
+        process.off('unhandledRejection', onRejection)
+      } catch (failure) {
+        // A patched `process.off`. `close` is awaited by the host, so it must not reject either.
+        safely(log, `${label}: could not remove every hook`, failure)
+      }
       await flush()
     },
   }

@@ -67,8 +67,28 @@ type Log = (message: string, detail?: unknown) => void
  * One client per process. A second set of process listeners would report every crash twice and
  * double the flush traffic, and two clients would each see the other's listener and defer to it,
  * so neither would exit.
+ *
+ * Per process, not per copy of this module: it is kept on `globalThis` under a registered symbol,
+ * so two copies of the package in one process — two versions, bundled by two dependencies — find
+ * each other.
  */
-let active: Vigil | undefined
+const ACTIVE = Symbol.for('@vigil/client/node:active')
+const registry = globalThis as unknown as Record<symbol, unknown>
+
+/** The client installed in this process, by this copy or another, if it looks like one. */
+function activeClient(): Vigil | undefined {
+  try {
+    const found = registry[ACTIVE] as Partial<Vigil> | null | undefined
+    if (typeof found !== 'object' || found === null) return undefined
+    const looksRight =
+      typeof found.captureError === 'function' &&
+      typeof found.flush === 'function' &&
+      typeof found.close === 'function'
+    return looksRight ? (found as Vigil) : undefined
+  } catch {
+    return undefined
+  }
+}
 
 /** What a client that cannot report hands back: it keeps the host's code working, and no more. */
 const INERT: Vigil = {
@@ -253,6 +273,7 @@ export function install(options: VigilOptions): Vigil {
   }
 
   const settings = outcome.settings
+  const active = activeClient()
   if (active !== undefined) {
     safely(
       settings.log,
@@ -447,6 +468,29 @@ function start(settings: Settings): Vigil {
   }
 
   let timer: ReturnType<typeof setInterval> | undefined
+
+  function release(): void {
+    try {
+      if (registry[ACTIVE] === vigil) delete registry[ACTIVE]
+    } catch {
+      /* a frozen globalThis; nothing was registered, then */
+    }
+  }
+
+  const vigil: Vigil = {
+    captureError: report,
+    flush,
+    async close(): Promise<void> {
+      if (closed) return
+      closed = true
+      release()
+      clearInterval(timer)
+      process.off('uncaughtException', onUncaught)
+      process.off('unhandledRejection', onRejection)
+      await flush()
+    },
+  }
+
   try {
     timer = setInterval(() => {
       try {
@@ -459,28 +503,15 @@ function start(settings: Settings): Vigil {
     // host behaves. `unref` is what keeps `node script.js` exiting when the script is done.
     timer.unref()
 
+    registry[ACTIVE] = vigil
     process.on('uncaughtException', onUncaught)
     process.on('unhandledRejection', onRejection)
   } catch (failure) {
     clearInterval(timer)
     process.off('uncaughtException', onUncaught)
     process.off('unhandledRejection', onRejection)
+    release()
     throw failure
   }
-
-  const vigil: Vigil = {
-    captureError: report,
-    flush,
-    async close(): Promise<void> {
-      if (closed) return
-      closed = true
-      if (active === vigil) active = undefined
-      clearInterval(timer)
-      process.off('uncaughtException', onUncaught)
-      process.off('unhandledRejection', onRejection)
-      await flush()
-    },
-  }
-  active = vigil
   return vigil
 }

@@ -678,6 +678,15 @@ describe('configuration it cannot report with', () => {
     } finally {
       vi.useRealTimers()
     }
+
+    // Nor is the failed client left registered, to be handed to the next install.
+    vi.mocked(process.on).mockRestore()
+    const failed = installed
+    const { vigil } = setup()
+    expect(vigil).not.toBe(failed)
+    expect(listeners('uncaughtException')).toBe(
+      before.find(([name]) => name === 'uncaughtException')![1].length + 1,
+    )
   })
 })
 

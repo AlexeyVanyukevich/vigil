@@ -295,6 +295,18 @@ const scenarios: Scenario[] = [
     events: [{ message: 'kaboom', count: 1 }],
     withinMs: 3_000,
   },
+  {
+    // Two copies of the package in one process — two versions bundled by two dependencies. Each
+    // would see the other's listener, defer to it, and leave a crashed process running.
+    name: 'installed from two copies of the package, a crash is reported once and exits once',
+    vigil: 'accepting',
+    script: `const copy = await import(ENTRY + '?second-copy')
+      copy.install({ url: process.env.VIGIL_URL, key: 'vgl_child', app: 'child', environment: 'test', log: () => {} })
+      ${BUSY}; ${CRASH}`,
+    code: 1,
+    events: [{ message: 'kaboom', count: 1 }],
+    withinMs: 3_000,
+  },
 ]
 
 interface Outcome {
@@ -314,6 +326,7 @@ function run(scenario: Scenario, index: number): Promise<Outcome> {
     file,
     `${scenario.before ?? ''}
 import { install } from ${JSON.stringify(entry)}
+const ENTRY = ${JSON.stringify(entry)}
 const vigil = install({
   url: process.env.VIGIL_URL,
   key: 'vgl_child',

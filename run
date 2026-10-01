@@ -193,6 +193,7 @@ scenario_check() {
   ( cd client && npx tsc --noEmit )
   # Vitest strips types without checking them, and the config above covers only what ships.
   ( cd client && npx tsc -p tsconfig.test.json )
+  ( cd web && npx tsc --noEmit )
   ok "Types clean"
 
   step "Tests"
@@ -202,9 +203,9 @@ scenario_check() {
 
 scenario_build() {
   need_node; need_deps
-  step "Building the server"
+  step "Building the server and the dashboard"
   npm run build
-  ok "server/dist is ready"
+  ok "server/dist and server/public are ready"
 }
 
 usage() {
@@ -212,11 +213,11 @@ usage() {
 ${BOLD}./run <scenario>${OFF}
 
   ${BOLD}dev${OFF} [--bg]     Postgres, migrations and the server
-  ${BOLD}start${OFF} [--bg]   the built server on one port
+  ${BOLD}start${OFF} [--bg]   the built server and dashboard on one port
   ${BOLD}stop${OFF}           stop whatever ${BOLD}dev --bg${OFF} or ${BOLD}start --bg${OFF} left running
   ${BOLD}test${OFF}           the server and client suites
   ${BOLD}check${OFF}          types, formatting, and the server and client suites
-  ${BOLD}build${OFF}          compile the server
+  ${BOLD}build${OFF}          compile the server and build the dashboard
   ${BOLD}migrate${OFF}        apply migrations to the local database
   ${BOLD}owner:password${OFF} set the owner's password (also signs every device out)
   ${BOLD}app:add${OFF}        register an application to be watched

@@ -16,7 +16,7 @@
   "prettier": "dev-kit/prettier",
   "scripts": {
     "test": "npm run --workspace server test && npm run --workspace client test",
-    "build": "npm run --workspace server build",
+    "build": "npm run --workspace server build && npm run --workspace web build",
     "check": "./run check",
     "format": "prettier --write ."
   },

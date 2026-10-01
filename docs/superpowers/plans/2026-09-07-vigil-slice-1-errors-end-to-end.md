@@ -112,12 +112,11 @@ task claims to provide** — at minimum `./run check` and `./run test`.
 never by merging `main` in. Every commit on it lands on `main` as written, so each one must pass
 `./run check` on its own — none of them is tidied away by a squash at the end.
 
-**`dev-kit` is consumed as `file:../dev-kit`**, which is neither install form its README
-sanctions. It resolves to a symlink, so this repository type-checks against `dev-kit`'s working
-tree — uncommitted edits included — and only on a machine that has both checked out side by
-side. That is a reasonable trade while the two are built together, and it is recorded here so it
-is a decision rather than an accident. Do not change it inside this slice; switching to the
-pinned git or registry form is its own change, with its own reason to happen.
+**`dev-kit` is pinned to `github:AlexeyVanyukevich/dev-kit#v1.2.1`** (commit `71cec2a`). It
+was `file:../dev-kit`, a symlink into the sibling checkout, until 2026-10-01, when that checkout
+moved to a breaking branch mid-slice and took every type-check and `./run` with it. The owner
+chose the pin. Do not move it inside this slice: adopting a newer dev-kit — including the
+sectioned layout under development — is its own change.
 
 **Ports, chosen so vigil and the reference application can run side by side:** server `4100`,
 Vite `5174`, compose Postgres `5435`.

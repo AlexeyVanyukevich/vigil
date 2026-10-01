@@ -273,6 +273,106 @@ describe('send never rejects', () => {
     }
   })
 
+  /**
+   * Runs `act` with spies on the two process events that are fatal or loud in a host, and waits
+   * past the point where Node would emit either.
+   */
+  async function quietly(act: () => Promise<unknown>): Promise<{
+    unhandled: ReturnType<typeof vi.fn>
+    uncaught: ReturnType<typeof vi.fn>
+  }> {
+    const unhandled = vi.fn()
+    const uncaught = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    process.on('uncaughtException', uncaught)
+    try {
+      await act()
+      // `setImmediate` is never stubbed below, and runs after the microtask queue has drained —
+      // which is when Node decides a rejection went unhandled — and after due timers.
+      for (let i = 0; i < 3; i += 1) await new Promise((resolve) => setImmediate(resolve))
+      return { unhandled, uncaught }
+    } finally {
+      process.off('unhandledRejection', unhandled)
+      process.off('uncaughtException', uncaught)
+    }
+  }
+
+  // A `setTimeout` that throws rejects the timeout promise before anything races it; an event that
+  // throws while its envelope is built then leaves that rejection with nobody listening.
+  it('leaves no unhandled rejection behind when setTimeout throws and an event is hostile', async () => {
+    vi.stubGlobal('setTimeout', () => {
+      throw new Error('hostile setTimeout')
+    })
+    const hostile = { ...batch.events[0]! }
+    Object.defineProperty(hostile, 'type', {
+      enumerable: true,
+      get(): string {
+        throw new Error('hostile event')
+      },
+    })
+    const fetchImpl = accepting()
+
+    let result: boolean | undefined
+    const { unhandled, uncaught } = await quietly(async () => {
+      result = await send(options(fetchImpl as unknown as typeof fetch), {
+        ...batch,
+        events: [hostile],
+      })
+    })
+    expect(result).toBe(false)
+    expect(unhandled).not.toHaveBeenCalled()
+    expect(uncaught).not.toHaveBeenCalled()
+  })
+
+  // The timeout fires from a timer, where a throw is an uncaught exception in the host.
+  // Node's own AbortSignal reports a throwing listener itself, out of anyone's reach; these are
+  // the controllers whose throw reaches the caller of `abort()`.
+  const NativeAbortController = globalThis.AbortController
+  class ThrowingAbort {
+    readonly signal = new NativeAbortController().signal
+    abort(): void {
+      throw new Error('hostile abort')
+    }
+  }
+  /** A polyfill that calls its listeners synchronously and lets their errors propagate. */
+  class PropagatingAbort {
+    private readonly listeners: Array<() => void> = []
+    readonly signal = {
+      aborted: false,
+      addEventListener: (_type: string, listener: () => void) => this.listeners.push(listener),
+      removeEventListener: () => {},
+    }
+    abort(): void {
+      this.signal.aborted = true
+      for (const listener of this.listeners) listener()
+    }
+  }
+
+  it.each([
+    { name: 'abort() itself throws', controller: ThrowingAbort },
+    { name: "the injected fetch's abort listener throws", controller: PropagatingAbort },
+  ])('throws nothing into the host when $name', async ({ controller }) => {
+    vi.stubGlobal('AbortController', controller)
+    const listening = vi.fn((_url: string, init?: RequestInit) => {
+      init?.signal?.addEventListener('abort', () => {
+        throw new Error('hostile listener')
+      })
+      return new Promise<Response>(() => {})
+    })
+
+    let result: boolean | undefined
+    const { unhandled, uncaught } = await quietly(async () => {
+      result = await send(
+        { ...options(listening as unknown as typeof fetch), timeoutMs: 20 },
+        batch,
+      )
+    })
+    expect(result).toBe(false)
+    expect(listening).toHaveBeenCalledTimes(1)
+    expect(unhandled).not.toHaveBeenCalled()
+    expect(uncaught).not.toHaveBeenCalled()
+  })
+
   // A pending timer keeps an otherwise idle process alive for its whole duration.
   it.each([
     { name: 'on success', impl: async () => new Response(null, { status: 202 }) },

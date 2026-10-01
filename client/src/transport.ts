@@ -115,9 +115,18 @@ async function deliver(options: TransportOptions, batch: Batch): Promise<boolean
   const timedOut = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => {
       resolve('timeout')
-      controller?.abort()
+      // A timer callback that throws is an uncaught exception in the host. An `abort()` can throw,
+      // itself or through a listener a polyfill calls synchronously.
+      try {
+        controller?.abort()
+      } catch {
+        /* the send is already over; nothing is owed to anyone */
+      }
     }, delay(options.timeoutMs))
   })
+  // Handled from the start: if `setTimeout` throws, this rejects, and something below may throw
+  // before anything races it.
+  timedOut.catch(() => {})
 
   try {
     let allAccepted = true

@@ -4,5 +4,7 @@
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": ["src", "tests", "scripts"]
+  "include": ["src", "tests", "scripts"],
+  // Imports the client from outside this rootDir; type-checked by tsconfig.wire.json instead.
+  "exclude": ["tests/integration/client-wire.test.ts"]
 }

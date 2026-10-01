@@ -188,6 +188,8 @@ scenario_check() {
 
   step "Type-checking"
   ( cd server && npx tsc --noEmit )
+  # The wire test imports the client from outside the server's rootDir, so it has its own config.
+  ( cd server && npx tsc -p tsconfig.wire.json )
   ( cd client && npx tsc --noEmit )
   # Vitest strips types without checking them, and the config above covers only what ships.
   ( cd client && npx tsc -p tsconfig.test.json )

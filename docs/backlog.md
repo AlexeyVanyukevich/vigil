@@ -3,6 +3,42 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## A rate-limited sign-in says "The server refused that request."
+
+- Where: `web/src/routes/Login.tsx`, `submit`, and `web/src/errors.ts`, `COPY`; the server side is
+  `server/src/shared/errors.ts`, which answers any 4xx that is not an `AppError` as `bad_request`
+- Found: 2026-10-01, building the login screen
+- Problem: after `LOGIN_ATTEMPTS_PER_MINUTE` failures (10 by default), `POST /api/login` answers
+  429 with `{"error":"bad_request","message":"Rate limit exceeded, retry in 1 minute"}`. The 429
+  carries no code of its own, so the screen looks up `bad_request` and shows "The server refused
+  that request." Fail ten sign-ins in a minute, then try the right password.
+- Impact: the owner who mistypes a few times is told the server refused them, with no hint that
+  waiting a minute fixes it, and may well conclude the server is broken. The server needs a
+  `rate_limited` code (from the rate limiter's `errorResponseBuilder`) and `COPY` a line for it.
+
+## The dev proxy sends `/api` to port 4100 whatever `PORT` says
+
+- Where: `web/vite.config.ts`, `server.proxy['/api'].target`
+- Found: 2026-10-01, building the dashboard workspace
+- Problem: `./run dev` starts the server on `$PORT`, which `.env` may set, but the proxy target is
+  the literal `http://localhost:4100`. Set `PORT=4200` and run `./run dev`: the dashboard on
+  `$WEB_PORT` loads, and every `/api` call fails because nothing listens on 4100.
+- Impact: only a developer who moves the API port, and the symptom is "Cannot reach the server",
+  which does not point at the proxy. Reading the target from the environment in the Vite config
+  (Vite's `loadEnv` with an empty prefix) would keep the two in step.
+
+## `./run dev` stops whatever started it, not only its own two processes
+
+- Where: `run`, `scenario_dev`, `trap 'kill 0' EXIT INT TERM`
+- Found: 2026-10-01, adding the dashboard to `./run dev`
+- Problem: `kill 0` signals the whole process group. A terminal gives `./run dev` a group of its
+  own, so there it stops just the server and Vite. Started by a non-interactive parent — a
+  Makefile, an `npm run` script, an editor task — the script shares the parent's group, and the
+  parent is killed too. Seen: a `bash -c` wrapper that started `./run dev` and then stopped it
+  exited 143 before its next line ran.
+- Impact: a wrapper around `./run dev` cannot do anything after the stack stops. Signalling the
+  two recorded child PIDs (and their children) instead of the group would avoid it.
+
 ## What a script captures just before it ends normally is never sent
 
 - Where: `client/src/node.ts`, `install`; the flush timer is unreferenced and nothing flushes on
@@ -126,6 +162,9 @@ same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
   as `github:AlexeyVanyukevich/dev-kit#v1.2.0`, which a sibling project installs without trouble.
 - Impact: a clone on another machine, a CI runner or a Docker build cannot run `npm install`,
   and edits to the local dev-kit checkout reach this project unversioned.
+- Seen: 2026-10-01. The sibling checkout moved to a branch that relocates `tsconfig/*` and
+  `sh/lib.sh`, and every type-check here and `./run` itself failed mid-task, with nothing in
+  this repository changed.
 
 ## A boxed string reaches the wire one character per key, past secret matching
 

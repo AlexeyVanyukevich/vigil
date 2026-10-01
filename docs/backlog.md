@@ -3,6 +3,33 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## What a script captures just before it ends normally is never sent
+
+- Where: `client/src/node.ts`, `install`; the flush timer is unreferenced and nothing flushes on
+  the way out
+- Found: 2026-10-01, building the client's node entry point. A shortcut taken on purpose.
+- Problem: the periodic flush must not keep a finished script alive, so it is `unref`'d. A script
+  that calls `captureError` and then finishes, or a host that calls `process.exit(0)`, ends with the
+  event still queued. Install, `captureError(new Error('x'))`, let the script end: nothing arrives.
+  Only an uncaught exception flushes on the way out.
+- Impact: short-lived jobs — cron scripts, migrations, CLI tools — report nothing they handled
+  themselves. A `beforeExit` listener that flushes when the queue is not empty would cover the
+  natural end without keeping an idle process alive; `process.exit` cannot wait for a request.
+
+## The fatal path imitates Node's default rather than handing back to it
+
+- Where: `client/src/node.ts`, `onUncaught`, `onRejection` and `printAsNodeWould`
+- Found: 2026-10-01, building the client's node entry point
+- Problem: once vigil's listener exists, Node's own fatal handling never runs, so vigil re-creates
+  it, and four details differ. The printed error has no source-line arrow above it (Node's is
+  internal). With `--abort-on-uncaught-exception`, Node aborts with a core dump; with vigil installed
+  it exits 1. A rejection vigil raises again reaches the host's `uncaughtException` listeners with
+  `origin` `'uncaughtException'`, where Node passes `'unhandledRejection'`. Under
+  `--unhandled-rejections=warn-with-error-code`, vigil sets the exit code but does not print Node's
+  `UnhandledPromiseRejectionWarning` line.
+- Impact: small. A host that reads `origin`, relies on the core dump, or greps its logs for the
+  warning line behaves differently once vigil is installed. Exit codes match Node's in every mode.
+
 ## A collapsed run stops counting at 1,000,000 until the next flush
 
 - Where: `client/src/queue.ts`, `EventQueue.add`

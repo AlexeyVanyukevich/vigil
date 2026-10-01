@@ -153,19 +153,6 @@ same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 - Impact: `./run` dies with "No such file or directory" instead of installing the missing kit,
   on any machine that pulls the adoption onto an existing install.
 
-## dev-kit is installed from a sibling directory, so a fresh clone cannot install
-
-- Where: `package.json`, `"dev-kit": "file:../dev-kit"`, and the lockfile's link to `../dev-kit`
-- Found: 2026-09-30, adopting dev-kit in a sibling project
-- Problem: the `file:` specifier resolves only where a dev-kit checkout sits beside this one.
-  The kit's documented channels are the private registry or its git host at a pinned tag, such
-  as `github:AlexeyVanyukevich/dev-kit#v1.2.0`, which a sibling project installs without trouble.
-- Impact: a clone on another machine, a CI runner or a Docker build cannot run `npm install`,
-  and edits to the local dev-kit checkout reach this project unversioned.
-- Seen: 2026-10-01. The sibling checkout moved to a branch that relocates `tsconfig/*` and
-  `sh/lib.sh`, and every type-check here and `./run` itself failed mid-task, with nothing in
-  this repository changed.
-
 ## A boxed string reaches the wire one character per key, past secret matching
 
 - Where: `client/src/redact.ts`, `redact`, the object branch of `walk`

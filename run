@@ -75,22 +75,33 @@ scenario_dev() {
   export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
   export PORT="$APP_PORT"
 
-  # Task 12 adds the Vite half of this scenario, alongside the `web/` workspace it creates:
-  # a second background process on $WEB_PORT in the --bg branch, a second piped process in the
-  # foreground branch, and the `trap 'kill 0'` that takes the pair down together. Until then
-  # `./run dev` runs the API alone, because naming a workspace npm cannot find makes the whole
-  # scenario fail rather than start half of it.
+  # `--strictPort` because Vite otherwise takes the next free port when $WEB_PORT is busy, and
+  # the address printed below would then point at whatever was already there.
+  local vite=(npm run --workspace web dev -- --port "$WEB_PORT" --strictPort)
+
   if [ "${1:-}" = "--bg" ]; then
     mkdir -p "$RUN_STATE"
     npm run --workspace server dev >"$RUN_STATE/server.log" 2>&1 & echo $! >"$RUN_STATE/server.pid"
+    "${vite[@]}" >"$RUN_STATE/web.log" 2>&1 & echo $! >"$RUN_STATE/web.pid"
     ok "Running in the background"
-    note "http://localhost:${APP_PORT}   logs: ${RUN_STATE}/*.log   stop: ./run stop"
+    note "http://localhost:${WEB_PORT}   logs: ${RUN_STATE}/*.log   stop: ./run stop"
     return
   fi
 
-  ok "Server on :${APP_PORT}"
-  note "Ctrl-C stops it"
-  npm run --workspace server dev
+  ok "Dashboard on http://localhost:${WEB_PORT}, API on :${APP_PORT}"
+  note "Ctrl-C stops both"
+
+  # Either half dying takes the other with it, and Ctrl-C takes both: a stack left half running
+  # looks like a bug in the app rather than a process that went away.
+  trap 'kill 0' EXIT INT TERM
+  npm run --workspace server dev 2>&1 | sed -u "s/^/${DIM}[server]${OFF} /" &
+  local server=$!
+  "${vite[@]}" 2>&1 | sed -u "s/^/${DIM}[web]   ${OFF} /" &
+  local web=$!
+
+  # `wait -n` would say this in one line, but macOS ships bash 3.2, which does not have it, and
+  # a plain `wait` waits for both — the half-running stack the trap exists to prevent.
+  while kill -0 "$server" 2>/dev/null && kill -0 "$web" 2>/dev/null; do sleep 1; done
 }
 
 scenario_start() {
@@ -212,7 +223,7 @@ usage() {
   cat <<TEXT
 ${BOLD}./run <scenario>${OFF}
 
-  ${BOLD}dev${OFF} [--bg]     Postgres, migrations and the server
+  ${BOLD}dev${OFF} [--bg]     Postgres, migrations, the server and the dashboard with hot reload
   ${BOLD}start${OFF} [--bg]   the built server and dashboard on one port
   ${BOLD}stop${OFF}           stop whatever ${BOLD}dev --bg${OFF} or ${BOLD}start --bg${OFF} left running
   ${BOLD}test${OFF}           the server and client suites

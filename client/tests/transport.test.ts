@@ -283,13 +283,34 @@ describe('send never rejects', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  // Node prints a warning on the host's stderr for each of these, every time a timer is set.
-  it.each([Number.NaN, -1, 0, Number.POSITIVE_INFINITY, 2 ** 40])(
-    'sets no timer Node would warn about for a timeout of %s',
-    async (timeoutMs) => {
-      const warn = vi.spyOn(process, 'emitWarning').mockImplementation(() => {})
-      await send({ ...options(accepting() as unknown as typeof fetch), timeoutMs }, batch)
-      expect(warn).not.toHaveBeenCalled()
+  // Node prints a warning on the host's stderr for a delay that is not a number, is under 1 or
+  // does not fit 32 bits, and fires the timer in 1 ms. It warns once per process for each kind,
+  // so a warning spy would pass every row after the first of its kind; the delay handed to
+  // `setTimeout` is checked instead. The last three rows are what an untyped JavaScript caller can
+  // pass where the type says number.
+  const MAX_TIMER_MS = 2_147_483_647
+  const timeouts: Array<{ timeoutMs: unknown; delay: number }> = [
+    { timeoutMs: 1_500, delay: 1_500 },
+    { timeoutMs: Number.NaN, delay: 1 },
+    { timeoutMs: -1, delay: 1 },
+    { timeoutMs: -5, delay: 1 },
+    { timeoutMs: 0, delay: 1 },
+    { timeoutMs: Number.POSITIVE_INFINITY, delay: MAX_TIMER_MS },
+    { timeoutMs: 2 ** 40, delay: MAX_TIMER_MS },
+    { timeoutMs: undefined, delay: 1 },
+    { timeoutMs: 'abc', delay: 1 },
+    { timeoutMs: null, delay: 1 },
+  ]
+
+  it.each(timeouts)(
+    'sets a timer Node takes as given for a timeout of $timeoutMs',
+    async ({ timeoutMs, delay }) => {
+      const timers = vi.spyOn(globalThis, 'setTimeout')
+      await send(
+        { ...options(accepting() as unknown as typeof fetch), timeoutMs: timeoutMs as number },
+        batch,
+      )
+      expect(timers.mock.calls.map((call) => call[1])).toEqual([delay])
     },
   )
 })

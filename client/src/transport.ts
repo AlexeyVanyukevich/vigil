@@ -21,10 +21,11 @@ const MAX_TIMER_MS = 2_147_483_647
 
 /**
  * `timeoutMs` as a delay Node will neither shorten nor warn about. Node prints a warning on the
- * host's stderr for a NaN, negative or oversized delay, every time a timer is set with one.
+ * host's stderr for a NaN, negative or oversized delay. Written so that whatever an untyped
+ * caller passes — `undefined`, a string — which is not a number of at least 1 becomes 1.
  */
 function delay(timeoutMs: number): number {
-  if (Number.isNaN(timeoutMs) || timeoutMs < 1) return 1
+  if (!(timeoutMs >= 1)) return 1
   return Math.min(timeoutMs, MAX_TIMER_MS)
 }
 

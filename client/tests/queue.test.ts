@@ -43,8 +43,8 @@ describe('EventQueue', () => {
     const drained = queue.drain()
     expect(drained).toHaveLength(2)
     expect(drained.map((e) => [e.message, e.count])).toEqual([
-      ['boom', 2],
       ['other', 1],
+      ['boom', 2],
     ])
   })
 
@@ -90,9 +90,32 @@ describe('EventQueue', () => {
 
     expect(queue.dropped).toBe(0)
     expect(queue.drain().map((e) => [e.message, e.count])).toEqual([
-      ['a', 101],
       ['b', 1],
+      ['a', 101],
     ])
+  })
+
+  // Eviction follows the last sighting, not the first. During an incident a hot loop and a stream
+  // of one-off errors — a request id in each message — arrive together; dropping the hot one would
+  // lose its whole count and keep singletons that will never recur.
+  it('keeps a failure that is still recurring, with its full count, over one-offs', () => {
+    const queue = new EventQueue(3)
+    const hot = { ...event('hot loop'), occurred_at: '2026-09-07T10:00:00.000Z' }
+    for (let i = 0; i < 50_000; i += 1) queue.add(hot)
+    for (let i = 0; i < 10; i += 1) {
+      queue.add(event(`request ${i} failed`))
+      queue.add(hot)
+    }
+
+    const drained = queue.drain()
+    expect(drained.map((e) => [e.message, e.count])).toEqual([
+      ['request 8 failed', 1],
+      ['request 9 failed', 1],
+      ['hot loop', 50_010],
+    ])
+    // Moved to the back, but the run still started when it started.
+    expect(drained.at(-1)!.occurred_at).toBe('2026-09-07T10:00:00.000Z')
+    expect(queue.dropped).toBe(8)
   })
 
   it('accepts a queue of one', () => {

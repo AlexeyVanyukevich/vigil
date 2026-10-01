@@ -45,6 +45,10 @@ export class EventQueue {
         occurrences(existing.count) + occurrences(event.count),
         LIMITS.countMax,
       )
+      // Moved to newest, so eviction follows the last sighting: a failure still recurring is what
+      // is happening now, and must not be dropped for one-offs that arrived after it first did.
+      this.events.delete(key)
+      this.events.set(key, existing)
       return
     }
 

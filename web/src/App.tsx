@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
+import { useEffect, type ReactNode } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router'
 import { api, NotSignedIn } from './api'
 import { messageFor } from './errors'
 import { Login } from './routes/Login'
+import { watchForSignOut } from './session'
 
 /**
  * The session is checked by asking the server, never by reading a cookie: the cookie is
@@ -21,6 +22,24 @@ export function RequireSession({ children }: { children: ReactNode }) {
   if (session.error instanceof NotSignedIn) return <Navigate to="/login" replace />
   if (session.error) return <Trouble message={messageFor(session.error)} />
   return <>{children}</>
+}
+
+/**
+ * A 401 from any query or mutation, on any screen, goes to the login screen.
+ *
+ * The cache is not cleared here. The router's navigation lands in a transition, and clearing the
+ * cache while the screen that failed is still mounted makes it rebuild its queries and fetch
+ * again — each fetch another 401 — until the transition commits. The login screen clears it
+ * instead, once nothing is rendering from it.
+ */
+function SignInAgain() {
+  const client = useQueryClient()
+  const navigate = useNavigate()
+  useEffect(
+    () => watchForSignOut(client, () => void navigate('/login', { replace: true })),
+    [client, navigate],
+  )
+  return null
 }
 
 function Waiting() {
@@ -45,6 +64,7 @@ function Trouble({ message }: { message: string }) {
 export function App() {
   return (
     <BrowserRouter>
+      <SignInAgain />
       <Routes>
         <Route path="/login" element={<Login />} />
         {/* Task 13 replaces this with the Issues and IssueDetail routes. */}

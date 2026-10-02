@@ -1,13 +1,22 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 import { api, ApiError } from '../api'
 import { messageFor } from '../errors'
 
 export function Login() {
   const navigate = useNavigate()
+  const client = useQueryClient()
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
+
+  // Whatever the dashboard cached belongs to a session that is over — signed out, expired, or
+  // never begun — and `RequireSession` would render it on Back without asking the server. By the
+  // time this screen mounts nothing is rendering from it, so clearing it cannot set off a refetch.
+  useEffect(() => {
+    client.clear()
+  }, [client])
 
   async function submit(event: FormEvent) {
     event.preventDefault()

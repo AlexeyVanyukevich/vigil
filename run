@@ -149,6 +149,8 @@ scenario_test() {
   npm run --workspace server test
   step "Client suite (no server, no database)"
   npm run --workspace client test
+  step "Dashboard suite (no server, no browser)"
+  npm run --workspace web test
 }
 
 # No `scenario_test_ui` yet. `playwright test` needs `playwright.config.ts`, which Task 14
@@ -210,6 +212,7 @@ scenario_check() {
   step "Tests"
   npm run --workspace server test
   npm run --workspace client test
+  npm run --workspace web test
 }
 
 scenario_build() {
@@ -226,8 +229,8 @@ ${BOLD}./run <scenario>${OFF}
   ${BOLD}dev${OFF} [--bg]     Postgres, migrations, the server and the dashboard with hot reload
   ${BOLD}start${OFF} [--bg]   the built server and dashboard on one port
   ${BOLD}stop${OFF}           stop whatever ${BOLD}dev --bg${OFF} or ${BOLD}start --bg${OFF} left running
-  ${BOLD}test${OFF}           the server and client suites
-  ${BOLD}check${OFF}          types, formatting, and the server and client suites
+  ${BOLD}test${OFF}           the server, client and dashboard suites
+  ${BOLD}check${OFF}          types, formatting, and the server, client and dashboard suites
   ${BOLD}build${OFF}          compile the server and build the dashboard
   ${BOLD}migrate${OFF}        apply migrations to the local database
   ${BOLD}owner:password${OFF} set the owner's password (also signs every device out)

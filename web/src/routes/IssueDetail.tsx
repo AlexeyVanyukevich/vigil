@@ -19,14 +19,16 @@ export function IssueDetail() {
   const { id = '' } = useParams()
   const queryClient = useQueryClient()
   const now = useNow()
+  // The router decodes the id; put back raw, `..%2Fapps` would ask for `/api/apps`.
+  const path = `/api/issues/${encodeURIComponent(id)}`
 
   const detail = useQuery({
     queryKey: ['issue', id],
-    queryFn: () => api.get<Detail>(`/api/issues/${id}`),
+    queryFn: () => api.get<Detail>(path),
   })
 
   const setStatus = useMutation({
-    mutationFn: (status: IssueStatus) => api.patch(`/api/issues/${id}`, { status }),
+    mutationFn: (status: IssueStatus) => api.patch(path, { status }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['issue', id] })
       await queryClient.invalidateQueries({ queryKey: ['issues'] })

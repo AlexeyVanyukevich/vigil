@@ -32,6 +32,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init,
       // The session cookie is httpOnly; the browser attaches it, nothing here reads it.
       credentials: 'same-origin',
+      // Never an answer from the HTTP cache: whether the owner is still signed in, and whether an
+      // issue is still happening, are questions only the server can answer, and only now.
+      cache: 'no-store',
       headers: {
         ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
         ...init.headers,

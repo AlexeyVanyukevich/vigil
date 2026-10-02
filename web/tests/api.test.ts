@@ -85,6 +85,17 @@ describe('request', () => {
     await expect(api.post('/api/logout')).resolves.toBeUndefined()
   })
 
+  // A browser may answer a GET from its HTTP cache. Whether the owner is still signed in, and
+  // whether an issue is still happening, are questions only the server can answer now.
+  it('never lets the browser answer from its cache', async () => {
+    const fetch = answerWith({ status: 200, body: '{"signedIn":true}', contentType: json })
+
+    await api.get('/api/me')
+
+    const [, init] = fetch.mock.calls[0] as [string, RequestInit]
+    expect(init.cache).toBe('no-store')
+  })
+
   it('sends a JSON body only when there is one', async () => {
     const fetch = answerWith({ status: 204 })
 

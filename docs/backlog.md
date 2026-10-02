@@ -3,6 +3,70 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## A late or replayed event makes an issue "first seen" after it was "last seen"
+
+- Where: `server/src/modules/ingest/ingest.service.ts`, the issue upsert — the `insertInto('issues')`
+  values and the `update` object on conflict
+- Found: 2026-10-02, reviewing the issue detail screen
+- Problem: on insert, `last_seen_at` is set from the event's `occurred_at`, but `first_seen_at` is
+  left to its column default, `now()` — the time vigil received it. On update, `last_seen_at` takes
+  `greatest(...)` and `first_seen_at` is never touched, so it never moves earlier. Report a new
+  error with `occurred_at` two hours in the past: the issue detail says "first seen just now ·
+  last seen 2h ago". An offline queue replaying an older occurrence of a known issue leaves
+  `first_seen_at` later than it should be in the same way.
+- Impact: every issue first reported by a replayed queue has its age wrong, and "first seen" after
+  "last seen" reads as a broken tool. The fix is `first_seen_at: occurredAt` on insert and
+  `least(first_seen_at, occurredAt)` on update.
+
+## Signing out clears the cache while the list is still mounted
+
+- Where: `web/src/session.ts`, `signOut`, called from `web/src/routes/Issues.tsx`, `SignOut`
+- Found: 2026-10-02, reviewing the issues list
+- Problem: `signOut` calls `client.clear()` and then navigates. Between the two, the Issues screen
+  is still mounted; its queries lose their data and may refetch. The server has just ended the
+  session, so each refetch answers 401, and `SignInAgain` navigates to `/login` again on top of the
+  navigation already under way. `App.tsx` avoids exactly this on the 401 path by leaving the clear
+  to the login screen, but explicit sign-out does not.
+- Impact: believed harmless — every path ends on `/login` with an empty cache — but unverified in
+  a browser: possible extra 401s in the network log and a redundant navigation. Clearing in `Login`
+  alone (which already happens on mount) would make the clear in `signOut` unnecessary, though
+  `tests/session.test.ts` asserts the cache is empty at the moment of navigating.
+
+## Occurrence times are unlabelled and in the browser's time zone
+
+- Where: `web/src/routes/IssueDetail.tsx`, "Recent occurrences", `toLocaleString('en-GB')`
+- Found: 2026-10-02, reviewing the issue detail screen
+- Problem: each occurrence shows a bare `07/09/2026, 12:00:00` in whatever zone the browser is set
+  to, with no zone named. Open the same issue from a laptop on another zone, or compare with a
+  server log in UTC: the times differ, and nothing on the screen says which zone either is.
+- Impact: matching an occurrence to a log line means guessing the offset. Showing the zone (or
+  UTC, with a tooltip) would remove the guess.
+
+## A link to an issue loses its destination at the sign-in screen
+
+- Where: `web/src/App.tsx`, `RequireSession` (`<Navigate to="/login" replace />`), and
+  `web/src/routes/Login.tsx`, `submit` (`navigate('/')`)
+- Found: 2026-10-02, reviewing the issue detail screen
+- Problem: open `/issues/<id>` without a session: the dashboard goes to `/login`, and after signing
+  in lands on `/`, not on the issue. Nothing carries the original address through sign-in. Spec §11
+  wants notification deep links to land on the issue or monitor detail, "one tap from the evidence".
+- Impact: none yet — there are no notifications until the alerting slice. That slice must add a
+  return-to (a `from` in the navigation state or a query parameter, accepted only as a same-origin
+  path) or every alert link opens the issues list instead of the issue.
+
+## The environment filter only offers environments seen in the latest 200 issues
+
+- Where: `web/src/routes/Issues.tsx`, the `seen` query and `ENVIRONMENT_SAMPLE`; `web/src/issues.ts`,
+  `environmentsOf`
+- Found: 2026-10-02, reviewing the issues list
+- Problem: there is no endpoint listing environments, so the control's options come from a second
+  `GET /api/issues?limit=200` (the API's maximum) across every status. An environment whose issues
+  are all older than the 200 most recently seen is not offered. Report one error from `staging`,
+  then 200 distinct errors from `production`: `staging` is no longer in the control.
+- Impact: small at one host's scale, but the filter silently hides an environment rather than
+  saying it cannot list them all, and the sample costs a 200-row request on every change of
+  application. A `GET /api/environments` (distinct over `issues`) would answer it exactly.
+
 ## A rate-limited sign-in says "The server refused that request."
 
 - Where: `web/src/routes/Login.tsx`, `submit`, and `web/src/errors.ts`, `COPY`; the server side is

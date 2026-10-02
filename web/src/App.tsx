@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router'
 import { api, NotSignedIn } from './api'
 import { messageFor } from './errors'
+import { IssueDetail } from './routes/IssueDetail'
+import { Issues } from './routes/Issues'
 import { Login } from './routes/Login'
 import { watchForSignOut } from './session'
 
@@ -67,12 +69,19 @@ export function App() {
       <SignInAgain />
       <Routes>
         <Route path="/login" element={<Login />} />
-        {/* Task 13 replaces this with the Issues and IssueDetail routes. */}
         <Route
           path="/"
           element={
             <RequireSession>
-              <p>Signed in.</p>
+              <Issues />
+            </RequireSession>
+          }
+        />
+        <Route
+          path="/issues/:id"
+          element={
+            <RequireSession>
+              <IssueDetail />
             </RequireSession>
           }
         />

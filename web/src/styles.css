@@ -252,7 +252,8 @@ a {
   gap: 8px;
 }
 
-.stack {
+.stack,
+.context {
   margin: 0;
   padding: 16px;
   background: var(--surface-raised);
@@ -268,6 +269,21 @@ a {
 
 .stack__frame--vendor {
   color: var(--muted);
+}
+
+.stack__fold summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.signout {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.signout .error {
+  margin: 0;
 }
 
 .section {

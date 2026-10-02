@@ -27,3 +27,6 @@ tests/ui/.runtime.json
 
 # The built SPA, served by the server.
 server/public/
+
+# Scratch written by the Playwright MCP browser tool: page snapshots and console logs.
+.playwright-mcp/

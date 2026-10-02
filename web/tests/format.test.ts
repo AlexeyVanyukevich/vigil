@@ -59,23 +59,38 @@ const frames: FrameCase[] = [
   },
   {
     name: 'a dependency’s frame on Windows',
-    stack: 'at run (C:\\app\\node_modules\\fastify\\lib\\handle.js:118:9)',
-    vendor: [true],
+    stack: 'Error: x\n    at run (C:\\app\\node_modules\\fastify\\lib\\handle.js:118:9)',
+    vendor: [false, true],
   },
   {
     name: 'pnpm’s nested store is still a dependency',
-    stack: 'at run (/app/node_modules/.pnpm/fastify@5.0.0/node_modules/fastify/lib/handle.js:1:1)',
-    vendor: [true],
+    stack:
+      'Error: x\n    at run (/app/node_modules/.pnpm/fastify@5.0.0/node_modules/fastify/lib/handle.js:1:1)',
+    vendor: [false, true],
   },
   {
     name: 'a name that merely contains the word is the owner’s',
-    stack: 'at load (/app/src/node_modules_loader.js:3:1)',
-    vendor: [false],
+    stack: 'Error: x\n    at load (/app/src/node_modules_loader.js:3:1)',
+    vendor: [false, false],
   },
   {
     name: 'line endings from Windows do not leave a carriage return on each frame',
     stack: 'Error: x\r\n    at a (/app/a.js:1:1)\r\n    at b (/app/node_modules/b/b.js:1:1)',
     vendor: [false, false, true],
+  },
+  // The first line is the error itself, whatever path its message names. Folding it would hide
+  // what went wrong behind "N frames in node_modules", and count it as one of them.
+  {
+    name: 'an error line naming a dependency’s path is the message, not a frame',
+    stack:
+      "Error: ENOENT: no such file or directory, open '/app/node_modules/x/data.json'\n    at load (/app/src/a.js:1:1)",
+    vendor: [false, false],
+  },
+  {
+    name: 'a stack of nothing but dependency frames keeps its message out of them',
+    stack:
+      'Error: x\n    at a (/app/node_modules/a/a.js:1:1)\n    at b (/app/node_modules/b/b.js:1:1)',
+    vendor: [false, true, true],
   },
 ]
 
@@ -119,6 +134,22 @@ const runs: RunCase[] = [
       { vendor: true, frames: 1 },
       { vendor: false, frames: 1 },
       { vendor: true, frames: 1 },
+    ],
+  },
+  {
+    name: 'an error line naming a dependency’s path does not join the fold after it',
+    stack: ["Error: ENOENT: open '/app/node_modules/x/data.json'", dep, dep].join('\n'),
+    runs: [
+      { vendor: false, frames: 1 },
+      { vendor: true, frames: 2 },
+    ],
+  },
+  {
+    name: 'a stack of nothing but dependency frames folds all but its message',
+    stack: ['Error: x', dep, dep, dep].join('\n'),
+    runs: [
+      { vendor: false, frames: 1 },
+      { vendor: true, frames: 3 },
     ],
   },
 ]

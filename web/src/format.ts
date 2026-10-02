@@ -25,11 +25,13 @@ export function relativeTime(iso: string, now: number): string {
 /**
  * §11: node_modules frames are collapsed. They are still there — a stack with holes in it is
  * worse than a long one — but folded and dimmed, so the eye lands on the owner's own code.
+ *
+ * The first line is the error itself, never a frame, whatever path its message happens to name.
  */
 export function splitFrames(stack: string): Array<{ text: string; vendor: boolean }> {
-  return stack.split(/\r?\n/).map((text) => ({
+  return stack.split(/\r?\n/).map((text, index) => ({
     text,
-    vendor: /[/\\]node_modules[/\\]/.test(text),
+    vendor: index > 0 && /[/\\]node_modules[/\\]/.test(text),
   }))
 }
 

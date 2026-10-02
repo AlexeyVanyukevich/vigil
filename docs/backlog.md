@@ -22,10 +22,14 @@ same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 - Found: 2026-10-01, building the dashboard workspace
 - Problem: `./run dev` starts the server on `$PORT`, which `.env` may set, but the proxy target is
   the literal `http://localhost:4100`. Set `PORT=4200` and run `./run dev`: the dashboard on
-  `$WEB_PORT` loads, and every `/api` call fails because nothing listens on 4100.
-- Impact: only a developer who moves the API port, and the symptom is "Cannot reach the server",
-  which does not point at the proxy. Reading the target from the environment in the Vite config
-  (Vite's `loadEnv` with an empty prefix) would keep the two in step.
+  `$WEB_PORT` loads, and every `/api` call fails because nothing listens on 4100. Vite's proxy
+  answers each one with a `502` and a plain-text body, which the dashboard reads as the server
+  being unreachable: "Cannot reach the server. Check your connection." (Before 502 was mapped to
+  `offline`, the same mistake showed "Something went wrong. Try again.")
+- Impact: only a developer who moves the API port, and the symptom says the server is down while
+  it is running on the port it was told to use, which does not point at the proxy. Reading the
+  target from the environment in the Vite config (Vite's `loadEnv` with an empty prefix) would keep
+  the two in step.
 
 ## `./run dev` stops whatever started it, not only its own two processes
 

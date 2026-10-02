@@ -25,6 +25,8 @@ export class ApiError extends Error {
 /** Raised on a 401 so the router can show the login screen instead of a broken page. */
 export class NotSignedIn extends ApiError {}
 
+const GATEWAY_FAILURES = new Set([502, 503, 504])
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response
   try {
@@ -45,6 +47,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (response.status === 204) return undefined as T
+
+  // Vigil itself never answers these. They come from whatever stands in front of it — Vite's dev
+  // proxy, a reverse proxy in production — saying the server did not answer, in plain text with
+  // no code to look up. To the owner that is the server being unreachable, and it reads that way.
+  if (GATEWAY_FAILURES.has(response.status)) {
+    throw new ApiError(
+      'offline',
+      response.status,
+      `The server did not answer (${response.status}).`,
+    )
+  }
 
   const body = (await response.json().catch(() => ({}))) as Partial<ApiErrorBody>
 

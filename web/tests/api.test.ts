@@ -36,6 +36,16 @@ const failures: FailureCase[] = [
     status: 404,
     signedOut: false,
   },
+  // Vite's dev proxy answers an API it cannot reach with a 502 and a plain-text body, and so do
+  // the usual reverse proxies, with 503 or 504 besides. Whatever the gateway, the owner's problem
+  // is that the server is not answering, not that it answered something unexpected.
+  ...[502, 503, 504].map((status) => ({
+    name: `a ${status} from a proxy in front of the server is offline`,
+    answer: { status, body: 'Bad Gateway', contentType: 'text/plain' },
+    code: 'offline',
+    status,
+    signedOut: false,
+  })),
   {
     name: 'a 500 that is not JSON has no code to look up',
     answer: { status: 500, body: 'Internal Server Error', contentType: 'text/plain' },

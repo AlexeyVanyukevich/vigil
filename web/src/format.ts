@@ -6,9 +6,10 @@ const DAY = 24 * HOUR
  * "2h ago" rather than a timestamp, because the only question the list answers is whether
  * something is still happening. The exact time is on the detail screen, where it matters.
  *
- * `now` is a parameter so the thresholds can be tested without a clock; screens leave it out.
+ * `now` is required, not defaulted to `Date.now()`: a screen passes `useNow()`, which advances on
+ * its own, and a default would let one forget and freeze at the moment it rendered.
  */
-export function relativeTime(iso: string, now: number = Date.now()): string {
+export function relativeTime(iso: string, now: number): string {
   const then = new Date(iso).getTime()
   if (Number.isNaN(then)) return 'unknown'
 

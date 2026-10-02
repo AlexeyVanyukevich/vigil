@@ -5,6 +5,7 @@ import { api, type AppSummary, type IssueStatus, type IssueSummary } from '../ap
 import { messageFor } from '../errors'
 import { relativeTime } from '../format'
 import { environmentsOf, issuesPath, type IssueFilters } from '../issues'
+import { useNow } from '../now'
 import { signOut } from '../session'
 
 /** Where the screen opens: what is broken now, the most recent first. */
@@ -20,6 +21,7 @@ export function Issues() {
   const [filters, setFilters] = useState<IssueFilters>(OPENING)
   const set = (change: Partial<IssueFilters>) =>
     setFilters((current) => ({ ...current, ...change }))
+  const now = useNow()
 
   const apps = useQuery({
     queryKey: ['apps'],
@@ -122,7 +124,7 @@ export function Issues() {
                     <p className="issue__meta">
                       <span className="tag">{issue.app_name}</span>
                       <span className="tag">{issue.environment}</span>
-                      last seen {relativeTime(issue.last_seen_at)}
+                      last seen {relativeTime(issue.last_seen_at, now)}
                     </p>
                   </div>
                   <span className="issue__count">

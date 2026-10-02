@@ -4,6 +4,7 @@ import { api, type IssueOccurrence, type IssueStatus, type IssueSummary } from '
 import { messageFor } from '../errors'
 import { frameRuns, relativeTime } from '../format'
 import { actionsFor, reportedLate } from '../issues'
+import { useNow } from '../now'
 
 interface Detail {
   issue: IssueSummary
@@ -17,6 +18,7 @@ interface Detail {
 export function IssueDetail() {
   const { id = '' } = useParams()
   const queryClient = useQueryClient()
+  const now = useNow()
 
   const detail = useQuery({
     queryKey: ['issue', id],
@@ -63,7 +65,8 @@ export function IssueDetail() {
             <span className="tag">{issue.environment}</span>
             <span className="tag">{issue.runtime}</span>
             {issue.occurrence_count.toLocaleString('en')} occurrences · first seen{' '}
-            {relativeTime(issue.first_seen_at)} · last seen {relativeTime(issue.last_seen_at)}
+            {relativeTime(issue.first_seen_at, now)} · last seen{' '}
+            {relativeTime(issue.last_seen_at, now)}
           </p>
         </div>
 
@@ -112,7 +115,9 @@ export function IssueDetail() {
                 {event.count > 1 && ` · ×${event.count.toLocaleString('en')}`}
               </span>
               {reportedLate(event) && (
-                <span className="occurrence__late">reported {relativeTime(event.received_at)}</span>
+                <span className="occurrence__late">
+                  reported {relativeTime(event.received_at, now)}
+                </span>
               )}
             </li>
           ))}

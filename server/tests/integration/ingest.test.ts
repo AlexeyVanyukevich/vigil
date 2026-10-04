@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { sql } from 'kysely'
 import { buildTestApp, closeTestDb, getTestDb, resetDb } from './helpers.js'
@@ -87,6 +87,16 @@ beforeEach(async () => {
   await insertKey(db(), appId, 'server', key)
   await insertKey(db(), otherAppId, 'server', otherKey)
 })
+// The invariant, asserted on every issue every test in this file created, not only the ones that
+// are about it: an issue first seen after it was last seen reads as a broken tool.
+afterEach(async () => {
+  const inverted = await db()
+    .selectFrom('issues')
+    .select('id')
+    .where(sql<boolean>`first_seen_at > last_seen_at`)
+    .execute()
+  expect(inverted).toEqual([])
+})
 afterAll(async () => {
   await app.close()
   await closeTestDb()
@@ -158,6 +168,43 @@ describe('the key', () => {
     expect(response.statusCode).toBe(401)
   })
 })
+
+const HOUR = 3_600_000
+
+// Offsets are milliseconds from a base taken when the test starts; `reports` are sent in order.
+interface SeenCase {
+  name: string
+  reports: number[]
+  first: number
+  last: number
+}
+
+const SEEN_CASES: SeenCase[] = [
+  {
+    name: 'a new issue reported two hours late is first seen when it happened',
+    reports: [-2 * HOUR],
+    first: -2 * HOUR,
+    last: -2 * HOUR,
+  },
+  {
+    name: 'an older occurrence pulls first seen earlier and leaves last seen',
+    reports: [-HOUR, -3 * HOUR],
+    first: -3 * HOUR,
+    last: -HOUR,
+  },
+  {
+    name: 'a newer occurrence leaves first seen and moves last seen later',
+    reports: [-3 * HOUR, -HOUR],
+    first: -3 * HOUR,
+    last: -HOUR,
+  },
+  {
+    name: 'an occurrence between the two moves neither',
+    reports: [-3 * HOUR, -HOUR, -2 * HOUR],
+    first: -3 * HOUR,
+    last: -HOUR,
+  },
+]
 
 describe('storing a batch', () => {
   it('answers 202 as soon as it is stored', async () => {
@@ -261,6 +308,20 @@ describe('storing a batch', () => {
     const after = (await db().selectFrom('issues').select('last_seen_at').executeTakeFirstOrThrow())
       .last_seen_at
     expect(after.getTime()).toBe(before.getTime())
+  })
+
+  it.each(SEEN_CASES)('first and last seen: $name', async ({ reports, first, last }) => {
+    const base = Date.now()
+    for (const offset of reports) {
+      const next = batch()
+      next.events[0]!.occurred_at = new Date(base + offset).toISOString()
+      await post(next)
+    }
+
+    const issue = await db().selectFrom('issues').selectAll().executeTakeFirstOrThrow()
+    expect(issue.first_seen_at.getTime()).toBe(base + first)
+    expect(issue.last_seen_at.getTime()).toBe(base + last)
+    expect(issue.first_seen_at.getTime()).toBeLessThanOrEqual(issue.last_seen_at.getTime())
   })
 
   it('stores a context as json', async () => {

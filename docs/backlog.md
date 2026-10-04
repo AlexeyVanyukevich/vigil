@@ -3,21 +3,6 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
-## A late or replayed event makes an issue "first seen" after it was "last seen"
-
-- Where: `server/src/modules/ingest/ingest.service.ts`, the issue upsert — the `insertInto('issues')`
-  values and the `update` object on conflict
-- Found: 2026-10-02, reviewing the issue detail screen
-- Problem: on insert, `last_seen_at` is set from the event's `occurred_at`, but `first_seen_at` is
-  left to its column default, `now()` — the time vigil received it. On update, `last_seen_at` takes
-  `greatest(...)` and `first_seen_at` is never touched, so it never moves earlier. Report a new
-  error with `occurred_at` two hours in the past: the issue detail says "first seen just now ·
-  last seen 2h ago". An offline queue replaying an older occurrence of a known issue leaves
-  `first_seen_at` later than it should be in the same way.
-- Impact: every issue first reported by a replayed queue has its age wrong, and "first seen" after
-  "last seen" reads as a broken tool. The fix is `first_seen_at: occurredAt` on insert and
-  `least(first_seen_at, occurredAt)` on update.
-
 ## Signing out clears the cache while the list is still mounted
 
 - Where: `web/src/session.ts`, `signOut`, called from `web/src/routes/Issues.tsx`, `SignOut`

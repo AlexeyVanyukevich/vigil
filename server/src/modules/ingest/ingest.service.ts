@@ -138,6 +138,8 @@ export class IngestService {
         culprit,
         runtime: body.runtime,
         occurrence_count: count,
+        // When it happened, not when it arrived: the column default is the receive time.
+        first_seen_at: occurredAt,
         last_seen_at: occurredAt,
       })
       .onConflict((oc) => oc.columns(['app_id', 'environment', 'fingerprint']).doNothing())
@@ -170,6 +172,8 @@ export class IngestService {
         // An offline queue replaying an hour late must not drag this backwards and make a
         // live issue look stale.
         last_seen_at: sql`greatest(last_seen_at, ${occurredAt})`,
+        // And a replayed older occurrence pulls the first sighting earlier, never later.
+        first_seen_at: sql`least(first_seen_at, ${occurredAt})`,
       }
       if (regressed) {
         update.status = 'open'

@@ -17,12 +17,16 @@
   "scripts": {
     "test": "npm run --workspace server test && npm run --workspace client test && npm run --workspace web test",
     "build": "npm run --workspace server build && npm run --workspace web build",
+    "test:ui": "playwright test",
     "check": "./run check",
     "format": "prettier --write ."
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@testcontainers/postgresql": "^12.0.4",
+    "@types/pg": "^8.20.0",
     "dev-kit": "github:AlexeyVanyukevich/dev-kit#v1.2.1",
+    "pg": "^8.22.0",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2"
   }

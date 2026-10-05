@@ -153,9 +153,11 @@ scenario_test() {
   npm run --workspace web test
 }
 
-# No `scenario_test_ui` yet. `playwright test` needs `playwright.config.ts`, which Task 14
-# creates along with the journeys it runs; offering the scenario before then is offering a
-# command that fails. Task 14 adds this function, its usage line and its dispatch entry.
+scenario_test_ui() {
+  need_node; need_deps; need_docker
+  step "Browser journeys against the whole product"
+  npx playwright test
+}
 
 scenario_migrate() {
   need_node; need_deps
@@ -207,6 +209,9 @@ scenario_check() {
   # Vitest strips types without checking them, and the config above covers only what ships.
   ( cd client && npx tsc -p tsconfig.test.json )
   ( cd web && npx tsc --noEmit )
+  # The browser journeys are type-checked here and run only by `test:ui`: they are slow and
+  # need Docker, and Playwright strips their types without checking them.
+  npx tsc -p .
   ok "Types clean"
 
   step "Tests"
@@ -230,6 +235,7 @@ ${BOLD}./run <scenario>${OFF}
   ${BOLD}start${OFF} [--bg]   the built server and dashboard on one port
   ${BOLD}stop${OFF}           stop whatever ${BOLD}dev --bg${OFF} or ${BOLD}start --bg${OFF} left running
   ${BOLD}test${OFF}           the server, client and dashboard suites
+  ${BOLD}test:ui${OFF}        browser journeys against the built product (Docker; not in ${BOLD}check${OFF})
   ${BOLD}check${OFF}          types, formatting, and the server, client and dashboard suites
   ${BOLD}build${OFF}          compile the server and build the dashboard
   ${BOLD}migrate${OFF}        apply migrations to the local database
@@ -249,6 +255,7 @@ case "$SCENARIO" in
   start)          scenario_start "$@" ;;
   stop)           scenario_stop ;;
   test)           scenario_test ;;
+  test:ui)        scenario_test_ui ;;
   check)          scenario_check ;;
   build)          scenario_build ;;
   migrate)        scenario_migrate ;;

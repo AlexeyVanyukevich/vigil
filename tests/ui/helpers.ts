@@ -80,6 +80,12 @@ export interface Proxy {
   url: string
   /** From now on the upstream refuses connections, and the proxy answers 502 as nginx would. */
   cutOff(): void
+  /**
+   * Holds every API request unanswered until `release`. With the answers held, the only screens
+   * the dashboard can show are ones it rendered from memory. Done here rather than with
+   * `page.route`, which does not see the requests of a page restored from the back-forward cache.
+   */
+  hold(): { asked: () => string[]; release: () => void }
   close(): Promise<void>
 }
 
@@ -96,24 +102,31 @@ export async function startProxy(upstream: string): Promise<Proxy> {
   await new Promise((r) => dead.close(r))
 
   let port = target.port
+  let held: Array<{ path: string; forward: () => void }> | undefined
+
   const proxy: Server = createServer((incoming, outgoing) => {
-    const forward = request(
-      {
-        host: target.hostname,
-        port,
-        method: incoming.method,
-        path: incoming.url,
-        headers: incoming.headers,
-      },
-      (answer) => {
-        outgoing.writeHead(answer.statusCode ?? 502, answer.headers)
-        answer.pipe(outgoing)
-      },
-    )
-    forward.on('error', () => {
-      outgoing.writeHead(502, { 'content-type': 'text/html' }).end('<h1>502 Bad Gateway</h1>')
-    })
-    incoming.pipe(forward)
+    const forward = () => {
+      const upstreamRequest = request(
+        {
+          host: target.hostname,
+          port,
+          method: incoming.method,
+          path: incoming.url,
+          headers: incoming.headers,
+        },
+        (answer) => {
+          outgoing.writeHead(answer.statusCode ?? 502, answer.headers)
+          answer.pipe(outgoing)
+        },
+      )
+      upstreamRequest.on('error', () => {
+        outgoing.writeHead(502, { 'content-type': 'text/html' }).end('<h1>502 Bad Gateway</h1>')
+      })
+      incoming.pipe(upstreamRequest)
+    }
+    const path = incoming.url ?? ''
+    if (held !== undefined && path.startsWith('/api/')) held.push({ path, forward })
+    else forward()
   })
   await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r))
 
@@ -121,6 +134,17 @@ export async function startProxy(upstream: string): Promise<Proxy> {
     url: `http://localhost:${(proxy.address() as AddressInfo).port}`,
     cutOff: () => {
       port = String(deadPort)
+    },
+    hold: () => {
+      const these: Array<{ path: string; forward: () => void }> = []
+      held = these
+      return {
+        asked: () => these.map((request) => request.path.split('?')[0] ?? request.path),
+        release: () => {
+          held = undefined
+          for (const request of these) request.forward()
+        },
+      }
     },
     close: () => {
       proxy.closeAllConnections()

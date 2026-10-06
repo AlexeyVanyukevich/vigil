@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from './App'
+import { recheckOnRestore } from './session'
 import './styles.css'
 
 const client = new QueryClient({
@@ -15,6 +16,9 @@ const client = new QueryClient({
     },
   },
 })
+
+// For the page's lifetime: a page comes back from the back-forward cache at any moment.
+recheckOnRestore(client)
 
 const root = document.getElementById('root')
 if (root === null) throw new Error('No #root in the document')

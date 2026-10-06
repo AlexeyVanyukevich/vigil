@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MutationObserver, QueryClient } from '@tanstack/react-query'
+import { MutationObserver, QueryClient, QueryObserver } from '@tanstack/react-query'
 import { ApiError, NotSignedIn } from '../src/api'
-import { signOut, watchForSignOut } from '../src/session'
+import { recheckOnRestore, signOut, watchForSignOut } from '../src/session'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -132,5 +132,62 @@ describe('signOut', () => {
       expect(navigate).not.toHaveBeenCalled()
       expect(queryClient.getQueryData(['session'])).toEqual({ signedIn: true })
     }
+  })
+})
+
+interface RestoreCase {
+  name: string
+  /** `PageTransitionEvent.persisted`: true when the page came back from the back-forward cache. */
+  persisted: boolean
+  rechecks: boolean
+}
+
+const restores: RestoreCase[] = [
+  // Its memory is from whenever the owner left it, signed in perhaps, in a session that a later
+  // visit has since ended. Nothing in it can be trusted to say who may see the screen.
+  { name: 'a page restored from the back-forward cache', persisted: true, rechecks: true },
+  // A fresh load has asked the server already; asking again is a wasted round trip.
+  { name: 'a page loaded afresh', persisted: false, rechecks: false },
+]
+
+const pageshow = (persisted: boolean) => Object.assign(new Event('pageshow'), { persisted })
+
+describe('recheckOnRestore', () => {
+  it.each(restores)('$name', async ({ persisted, rechecks }) => {
+    const page = new EventTarget()
+    const queryClient = client()
+    const asked = vi.fn(() => Promise.resolve({ signedIn: true }))
+    // The screen on show: `RequireSession` is observing the session.
+    const observer = new QueryObserver(queryClient, { queryKey: ['session'], queryFn: asked })
+    const stopObserving = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(observer.getCurrentResult().data).toEqual({ signedIn: true }))
+    // A screen no longer on show, whose answer would render on Back.
+    queryClient.setQueryData(['issues', {}], { issues: [] })
+
+    recheckOnRestore(queryClient, page)
+    page.dispatchEvent(pageshow(persisted))
+
+    if (rechecks) {
+      expect(queryClient.getQueryData(['issues', {}])).toBeUndefined()
+      // Pending again, so `RequireSession` shows nothing until the server has answered.
+      expect(observer.getCurrentResult().isPending).toBe(true)
+      await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(2))
+    } else {
+      expect(queryClient.getQueryData(['issues', {}])).toEqual({ issues: [] })
+      expect(queryClient.getQueryData(['session'])).toEqual({ signedIn: true })
+      expect(asked).toHaveBeenCalledTimes(1)
+    }
+    stopObserving()
+  })
+
+  it('stops listening once unsubscribed', () => {
+    const page = new EventTarget()
+    const queryClient = client()
+    queryClient.setQueryData(['session'], { signedIn: true })
+
+    recheckOnRestore(queryClient, page)()
+    page.dispatchEvent(pageshow(true))
+
+    expect(queryClient.getQueryData(['session'])).toEqual({ signedIn: true })
   })
 })

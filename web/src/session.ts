@@ -23,6 +23,23 @@ export function watchForSignOut(client: QueryClient, onSignedOut: () => void): (
   }
 }
 
+/**
+ * A page restored from the back-forward cache comes back with its memory as it was when the owner
+ * left it: signed in, perhaps, in a session a later visit has since ended. That memory is then a
+ * guess about the session, and the screen it shows is one the server never approved. Every answer
+ * is dropped, and those on show asked for again, so `RequireSession` waits for the server.
+ *
+ * Signing out clears the cache, but only in the visit that signs out; this is the other visits.
+ * Returns the unsubscribe, so it can be the body of an effect.
+ */
+export function recheckOnRestore(client: QueryClient, page: EventTarget = window): () => void {
+  const onShow = (event: Event) => {
+    if ((event as PageTransitionEvent).persisted) void client.resetQueries()
+  }
+  page.addEventListener('pageshow', onShow)
+  return () => page.removeEventListener('pageshow', onShow)
+}
+
 type Navigate = (to: string, options: { replace: boolean }) => void | Promise<void>
 
 /**

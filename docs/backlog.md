@@ -3,6 +3,58 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## The culprit names Node's internals when a dependency throws from a timer
+
+- Where: `server/src/shared/fingerprint.ts`, `fingerprintOf`, `own = frames.filter(!vendor)`
+- Found: 2026-10-06, writing the browser journeys
+- Problem: only `node_modules` frames count as vendor, so `node:internal/...` frames count as the
+  owner's own. An error thrown wholly inside a dependency called from a timer — frames
+  `/app/node_modules/x/index.js`, then `listOnTimeout (node:internal/timers:588:17)` — gets the
+  culprit `listOnTimeout (node:internal/timers)` rather than the dependency's frame the comment
+  promises. The same frames are part of the fingerprint, so one throw site reached from a timer
+  and from a promise job becomes two issues.
+- Impact: the issues list shows a Node internal as "where in the code" for exactly the errors the
+  owner most needs pointing at a dependency. Treating `node:` frames as vendor (or skipping them)
+  would fix both; the fingerprint change would split existing issues once.
+
+## A page restored from the back-forward cache may paint the protected screen for a frame
+
+- Where: `web/src/session.ts`, `recheckOnRestore`; the document is served by
+  `server/src/app.ts`, `registerSpa`, with no `Cache-Control`
+- Found: 2026-10-06, writing the Back journey
+- Problem: sign in, open an issue, open `/` again in the same tab, sign out, press Back. The first
+  visit returns from the back-forward cache as it was, issue on screen. `recheckOnRestore` resets
+  every query on `pageshow`, so the screen turns to "Loading…" and then the login screen, and
+  `tests/ui/session.spec.ts` proves nothing protected remains once the page is checked. It cannot
+  prove the restored DOM is never painted before React re-renders.
+- Impact: possibly a frame of the previous session's screen on a shared machine. Serving
+  `index.html` with `Cache-Control: no-store` keeps the page out of the cache in most browsers,
+  and Chrome evicts such a page when a cookie changed, which signing out does.
+
+## `./run test:ui` assumes Playwright's browsers are installed
+
+- Where: `run`, `scenario_test_ui`; `tests/ui/session.spec.ts`, which launches the full
+  `chromium` channel for the Back journey
+- Found: 2026-10-06, first run of the browser journeys
+- Problem: nothing installs the browser builds the pinned `@playwright/test` needs. On a machine
+  that has another version's, every journey fails with "Executable doesn't exist at
+  …/chromium_headless_shell-1243/…" until `npx playwright install chromium` is run. The README
+  does not say so.
+- Impact: a fresh checkout, or any Playwright upgrade, gets a red `test:ui` that reads as a broken
+  suite. A `need_playwright` check in `run` (or the README line) would say what to do.
+
+## The journeys' Postgres container sometimes fails to start
+
+- Where: `tests/ui/global-setup.ts`, `new PostgreSqlContainer(...).start()`; the same harness as
+  `server/tests/integration/global-setup.ts`
+- Found: 2026-10-06, running the browser journeys repeatedly
+- Problem: once in about fifteen runs started back to back, Testcontainers' reaper failed with
+  "Timed out after 10000ms while waiting for container ports to be bound to the host" and the
+  run ended before any journey. The next run passed. Not reproduced on demand.
+- Impact: an occasional red `./run test:ui` that says nothing about the code. If it recurs, raise
+  Testcontainers' startup timeout or reuse the reaper (`TESTCONTAINERS_RYUK_DISABLED` is the
+  blunt alternative and leaves containers behind on a crash).
+
 ## Signing out clears the cache while the list is still mounted
 
 - Where: `web/src/session.ts`, `signOut`, called from `web/src/routes/Issues.tsx`, `SignOut`

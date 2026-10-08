@@ -65,12 +65,15 @@ export function reportFrom(failure: Failure): Promise<void> {
   })
 }
 
-/** Ends every session on the server, as an expiry or a password change elsewhere would. */
-export async function endSessions(): Promise<void> {
+/**
+ * Lets every session run out, as thirty days without a visit would. The rows stay, so it is the
+ * server's expiry check that turns them away, not a lookup that finds nothing.
+ */
+export async function expireSessions(): Promise<void> {
   const client = new pg.Client({ connectionString: runtime.databaseUrl })
   await client.connect()
   try {
-    await client.query('delete from sessions')
+    await client.query("update sessions set expires_at = now() - interval '1 minute'")
   } finally {
     await client.end()
   }

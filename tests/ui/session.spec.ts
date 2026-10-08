@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { endSessions, reportFrom, runtime, signIn, startProxy, type Failure } from './helpers.js'
+import { expireSessions, reportFrom, runtime, signIn, startProxy, type Failure } from './helpers.js'
 
 // What jsdom could not prove for the dashboard's session handling: a real browser's history, its
 // back-forward cache, a session ended on the server while the screen is open, and a server that
@@ -232,7 +232,7 @@ const NEXT_ACTIONS: Array<{
   },
 ]
 
-test.describe('the session ends on the server mid-use', () => {
+test.describe('the session expires on the server mid-use', () => {
   test.beforeAll(async () => {
     await reportFrom(OPEN_WHEN_THE_SESSION_ENDED)
   })
@@ -247,7 +247,7 @@ test.describe('the session ends on the server mid-use', () => {
         ).toHaveCount(1)
       }
 
-      await endSessions()
+      await expireSessions()
       await next.act(page)
 
       await expect(page).toHaveURL(/\/login$/)

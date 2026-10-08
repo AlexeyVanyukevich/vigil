@@ -17,20 +17,6 @@ same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
   owner most needs pointing at a dependency. Treating `node:` frames as vendor (or skipping them)
   would fix both; the fingerprint change would split existing issues once.
 
-## A page restored from the back-forward cache may paint the protected screen for a frame
-
-- Where: `web/src/session.ts`, `recheckOnRestore`; the document is served by
-  `server/src/app.ts`, `registerSpa`, with no `Cache-Control`
-- Found: 2026-10-06, writing the Back journey
-- Problem: sign in, open an issue, open `/` again in the same tab, sign out, press Back. The first
-  visit returns from the back-forward cache as it was, issue on screen. `recheckOnRestore` resets
-  every query on `pageshow`, so the screen turns to "Loading…" and then the login screen, and
-  `tests/ui/session.spec.ts` proves nothing protected remains once the page is checked. It cannot
-  prove the restored DOM is never painted before React re-renders.
-- Impact: possibly a frame of the previous session's screen on a shared machine. Serving
-  `index.html` with `Cache-Control: no-store` keeps the page out of the cache in most browsers,
-  and Chrome evicts such a page when a cookie changed, which signing out does.
-
 ## `./run test:ui` assumes Playwright's browsers are installed
 
 - Where: `run`, `scenario_test_ui`; `tests/ui/session.spec.ts`, which launches the full

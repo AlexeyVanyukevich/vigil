@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyStatic from '@fastify/static'
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox'
@@ -90,7 +90,18 @@ async function registerSpa(app: FastifyInstance): Promise<void> {
   ].find((candidate) => existsSync(join(candidate, 'index.html')))
 
   if (root !== undefined) {
-    await app.register(fastifyStatic, { root, index: ['index.html'] })
+    await app.register(fastifyStatic, {
+      root,
+      index: ['index.html'],
+      // The page, at `/` and through the fallback below, is never stored. A copy kept in the
+      // back-forward cache comes back painted with the session it was rendered for — after a
+      // sign-out, the previous owner's issues — before any script can check. `no-store` keeps it
+      // out (Chrome evicts such a page once a cookie changes, which signing out does). The hashed
+      // assets beside it are safe to cache and keep the default.
+      setHeaders: (reply, path) => {
+        if (basename(path) === 'index.html') reply.header('cache-control', 'no-store')
+      },
+    })
   } else {
     // The API suites run without a build, and a missing bundle must not stop the server from
     // answering /api or /ingest.

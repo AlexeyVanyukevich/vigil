@@ -48,6 +48,23 @@ async function pressBack(page: Page, to: RegExp): Promise<void> {
   await page.waitForFunction((source) => new RegExp(source).test(location.href), to.source)
 }
 
+/** Text only a signed-in screen shows: the issue's title, and the list's sign-out button. */
+const FIRST_FRAME_MARKERS = [titleOf(SEEN_BEFORE_SIGNING_OUT), 'Sign out']
+
+/**
+ * Read once, never retried: what the first frame of a page restored from the back-forward cache
+ * showed. Empty, or absent when no page was restored, is the only acceptable answer.
+ */
+async function expectNothingInTheFirstFrame(page: Page): Promise<void> {
+  // The frame is recorded in a `requestAnimationFrame` after `pageshow`; two more frames have
+  // passed by the time this resolves, so the value is settled, not awaited.
+  await page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  )
+  const shown = await page.locator('html').getAttribute('data-first-frame')
+  expect(shown ?? '', 'protected content in the first frame after Back').toBe('')
+}
+
 const LOGIN = /\/login$/
 const ISSUE = /\/issues\/[^/]+$/
 const LIST = /:\d+\/$/
@@ -57,8 +74,6 @@ const SIGN_OUTS: Array<{
   name: string
   /** Signs in and out, leaving the login screen current; returns the screens Back reaches. */
   visit: (page: Page, baseURL: string) => Promise<RegExp[]>
-  /** Whether those screens come back from the back-forward cache or from the page's memory. */
-  restored: boolean
 }> = [
   {
     // Nothing but the cache cleared on signing out stands between Back and the issue.
@@ -71,7 +86,6 @@ const SIGN_OUTS: Array<{
       await expect(page).toHaveURL(LOGIN)
       return [ISSUE, LIST]
     },
-    restored: false,
   },
   {
     name: 'in the same visit, then away to another page and back',
@@ -82,18 +96,19 @@ const SIGN_OUTS: Array<{
       await page.getByRole('button', { name: 'Sign out' }).click()
       await expect(page).toHaveURL(LOGIN)
 
-      // Out to another document and back: the dashboard returns from the back-forward cache, its
-      // memory as it was when the owner signed out.
+      // Out to another document and back. The dashboard is never kept in the back-forward
+      // cache, so it comes back as a fresh load.
       await page.goto(`${baseURL}/api/health`)
       await pressBack(page, LOGIN)
-      await expect(page.locator('html')).toHaveAttribute('data-restored', 'true')
+      await expectNothingInTheFirstFrame(page)
+      await expect(page.locator('html')).toHaveAttribute('data-restored', 'false')
       await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible()
       return [ISSUE, LIST]
     },
-    restored: true,
   },
   {
-    // The visit Back returns to never saw the sign-out: it went into the cache signed in.
+    // The visit Back returns to never saw the sign-out. Kept in the back-forward cache, it would
+    // come back signed in, painted before any script could run.
     name: 'in a later visit to the dashboard, in the same tab',
     visit: async (page, baseURL) => {
       await signIn(page, baseURL)
@@ -103,7 +118,6 @@ const SIGN_OUTS: Array<{
       await expect(page).toHaveURL(LOGIN)
       return [ISSUE, LIST]
     },
-    restored: true,
   },
 ]
 
@@ -115,7 +129,8 @@ test.describe('after signing out, Back shows nothing the session could see', () 
   for (const signOut of SIGN_OUTS) {
     test(`signed out ${signOut.name}`, async ({ playwright }) => {
       // Playwright launches Chromium with the back-forward cache off, and its headless shell
-      // cannot have one. This is the full browser with the cache on, as the owner's is.
+      // cannot have one. This is the full browser with the cache on, as the owner's is, so that
+      // the page staying out of it is the dashboard's doing and not the test's.
       const browser = await playwright.chromium.launch({
         channel: 'chromium',
         ignoreDefaultArgs: ['--disable-back-forward-cache'],
@@ -123,12 +138,23 @@ test.describe('after signing out, Back shows nothing the session could see', () 
       const proxy = await startProxy(runtime.baseURL)
       try {
         const page = await browser.newPage()
-        // Whether a document came back from the back-forward cache, with its memory intact.
-        await page.addInitScript(() => {
+        // Whether a document came back from the back-forward cache, with its memory intact, and
+        // what its first animation frame after coming back held. `toHaveCount(0)` retries, so it
+        // proves protected content goes away, never that it was not painted first; this is read
+        // once. It is not the whole story: Chromium presents the cached page's last frame before
+        // the first animation frame runs, so a restore at all is the failure, and
+        // `data-restored` is asserted below as well.
+        await page.addInitScript((markers: string[]) => {
           addEventListener('pageshow', (event) => {
             document.documentElement.dataset.restored = String(event.persisted)
+            if (!event.persisted) return
+            requestAnimationFrame(() => {
+              const text = document.body.innerText
+              const shown = markers.filter((marker) => text.includes(marker))
+              document.documentElement.dataset.firstFrame = shown.join(' | ')
+            })
           })
-        })
+        }, FIRST_FRAME_MARKERS)
 
         // Through a proxy that can hold the server's answers; see `Proxy.hold`.
         const screens = await signOut.visit(page, proxy.url)
@@ -142,12 +168,11 @@ test.describe('after signing out, Back shows nothing the session could see', () 
         for (const screen of screens) {
           const api = proxy.hold()
           await pressBack(page, screen)
-          // The visit as the owner left it, memory and all — never a fresh load, which would
-          // ask the server whatever the dashboard remembered.
-          await expect(page.locator('html')).toHaveAttribute(
-            'data-restored',
-            String(signOut.restored),
-          )
+          await expectNothingInTheFirstFrame(page)
+          // Never the visit as the owner left it: a page restored from the back-forward cache is
+          // painted from memory before any script runs, `recheckOnRestore` included. Each screen
+          // is either the same document's history or a fresh load that asks the server.
+          await expect(page.locator('html')).toHaveAttribute('data-restored', 'false')
 
           // With every answer held, only a screen rendered from memory could show anything.
           // The dashboard asks the server whether the session is alive, and waits.
@@ -165,6 +190,19 @@ test.describe('after signing out, Back shows nothing the session could see', () 
     })
   }
 })
+
+/** Every address the dashboard's page is served at: the index, and the fallback for a route. */
+const DASHBOARD_PAGES = ['/', '/login', '/issues/00000000-0000-0000-0000-000000000000']
+
+for (const path of DASHBOARD_PAGES) {
+  test(`the dashboard's page at ${path} is never stored`, async ({ request }) => {
+    const response = await request.get(`${runtime.baseURL}${path}`)
+    expect(response.headers()['content-type']).toContain('text/html')
+    // What keeps it out of the back-forward cache, and out of the HTTP cache: a stored copy
+    // would come back with whatever session it was rendered for.
+    expect(response.headers()['cache-control']).toBe('no-store')
+  })
+}
 
 /** What the owner does next, on a screen whose session the server has already ended. */
 const NEXT_ACTIONS: Array<{

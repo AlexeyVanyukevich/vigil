@@ -40,29 +40,19 @@ test('signing out ends the session', async ({ page }) => {
 /**
  * Back, as the owner presses it. `page.goBack()` waits for a load event that a page restored from
  * the back-forward cache never fires, so the history is driven from inside the page.
+ *
+ * Resolves two animation frames after the address matches. A restored page keeps the
+ * `data-restored="false"` of its original load until its `pageshow` runs; by the second frame it
+ * has, so what the caller reads is this arrival, never the stale value.
  */
 async function pressBack(page: Page, to: RegExp): Promise<void> {
   await page.evaluate(() => {
     setTimeout(() => history.back(), 0)
   })
   await page.waitForFunction((source) => new RegExp(source).test(location.href), to.source)
-}
-
-/** Text only a signed-in screen shows: the issue's title, and the list's sign-out button. */
-const FIRST_FRAME_MARKERS = [titleOf(SEEN_BEFORE_SIGNING_OUT), 'Sign out']
-
-/**
- * Read once, never retried: what the first frame of a page restored from the back-forward cache
- * showed. Empty, or absent when no page was restored, is the only acceptable answer.
- */
-async function expectNothingInTheFirstFrame(page: Page): Promise<void> {
-  // The frame is recorded in a `requestAnimationFrame` after `pageshow`; two more frames have
-  // passed by the time this resolves, so the value is settled, not awaited.
   await page.evaluate(
     () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
   )
-  const shown = await page.locator('html').getAttribute('data-first-frame')
-  expect(shown ?? '', 'protected content in the first frame after Back').toBe('')
 }
 
 const LOGIN = /\/login$/
@@ -100,7 +90,6 @@ const SIGN_OUTS: Array<{
       // cache, so it comes back as a fresh load.
       await page.goto(`${baseURL}/api/health`)
       await pressBack(page, LOGIN)
-      await expectNothingInTheFirstFrame(page)
       await expect(page.locator('html')).toHaveAttribute('data-restored', 'false')
       await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible()
       return [ISSUE, LIST]
@@ -138,23 +127,15 @@ test.describe('after signing out, Back shows nothing the session could see', () 
       const proxy = await startProxy(runtime.baseURL)
       try {
         const page = await browser.newPage()
-        // Whether a document came back from the back-forward cache, with its memory intact, and
-        // what its first animation frame after coming back held. `toHaveCount(0)` retries, so it
-        // proves protected content goes away, never that it was not painted first; this is read
-        // once. It is not the whole story: Chromium presents the cached page's last frame before
-        // the first animation frame runs, so a restore at all is the failure, and
-        // `data-restored` is asserted below as well.
-        await page.addInitScript((markers: string[]) => {
+        // Whether a document came back from the back-forward cache. A restored page is painted
+        // from memory before any of its scripts run, so no check made from inside the page can
+        // see that frame; `toHaveCount(0)` retries, and proves only that the content goes away.
+        // The restore itself is therefore the failure.
+        await page.addInitScript(() => {
           addEventListener('pageshow', (event) => {
             document.documentElement.dataset.restored = String(event.persisted)
-            if (!event.persisted) return
-            requestAnimationFrame(() => {
-              const text = document.body.innerText
-              const shown = markers.filter((marker) => text.includes(marker))
-              document.documentElement.dataset.firstFrame = shown.join(' | ')
-            })
           })
-        }, FIRST_FRAME_MARKERS)
+        })
 
         // Through a proxy that can hold the server's answers; see `Proxy.hold`.
         const screens = await signOut.visit(page, proxy.url)
@@ -168,7 +149,6 @@ test.describe('after signing out, Back shows nothing the session could see', () 
         for (const screen of screens) {
           const api = proxy.hold()
           await pressBack(page, screen)
-          await expectNothingInTheFirstFrame(page)
           // Never the visit as the owner left it: a page restored from the back-forward cache is
           // painted from memory before any script runs, `recheckOnRestore` included. Each screen
           // is either the same document's history or a fresh load that asks the server.

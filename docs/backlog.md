@@ -3,6 +3,20 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## An ingest key cannot be revoked except in SQL
+
+- Where: `server/scripts/issue-key.ts`, which ends "revoke the old one when you do"; `run`, which
+  has `key:issue` and nothing to revoke; `server/src/modules/ingest/key.repository.ts`,
+  `findLiveKey`, which honours `revoked_at`
+- Found: 2026-10-09, writing `docs/architecture.md`
+- Problem: nothing in the code ever sets `ingest_keys.revoked_at`. Issue a second key for an
+  application and try to retire the first: the only way is
+  `update ingest_keys set revoked_at = now() where …` in `psql`, picking the row by `created_at`,
+  since only the digest is stored. The rotation the key table exists for has no tool.
+- Impact: a leaked key stays live until the owner writes SQL against the production database, and
+  the command that issues keys tells them to do something no command does. A `./run key:revoke`
+  (listing keys by app, `created_at` and `last_used_at`, revoking one by id) would close it.
+
 ## The culprit names Node's internals when a dependency throws from a timer
 
 - Where: `server/src/shared/fingerprint.ts`, `fingerprintOf`, `own = frames.filter(!vendor)`
@@ -25,9 +39,10 @@ same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 - Problem: nothing installs the browser builds the pinned `@playwright/test` needs. On a machine
   that has another version's, every journey fails with "Executable doesn't exist at
   …/chromium_headless_shell-1243/…" until `npx playwright install chromium` is run. The README
-  does not say so.
+  says so since 2026-10-09; `./run test:ui` itself still does not.
 - Impact: a fresh checkout, or any Playwright upgrade, gets a red `test:ui` that reads as a broken
-  suite. A `need_playwright` check in `run` (or the README line) would say what to do.
+  suite unless its reader has the README open. A `need_playwright` check in `run` would say what
+  to do at the moment it matters.
 
 ## The journeys' Postgres container sometimes fails to start
 

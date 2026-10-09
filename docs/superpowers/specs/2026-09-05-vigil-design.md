@@ -1,6 +1,7 @@
 # Vigil — application health monitoring
 
-Status: **designed**, 2026-09-05. Not built.
+Status: **designed**, 2026-09-05. Slice 1 (errors end to end) shipped; Slices 2–4 not built. For
+what the system does, read `docs/architecture.md`.
 
 > **This is a decision record, not a description of the system.**
 >

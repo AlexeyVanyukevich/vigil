@@ -3,6 +3,18 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## `npm install` reports a high-severity advisory in a build-time dependency
+
+- Where: `package-lock.json`, `source-map-js@1.2.1`, pulled in by `web/`'s `vite` (through
+  `postcss`) and `jsdom` (through `css-tree`)
+- Found: 2026-10-10, running `./run` in a fresh clone for the slice's documentation task
+- Problem: every fresh install ends "1 high severity vulnerability". `npm audit` names
+  GHSA-68fv-2mgg-jv7q: `source-map-js` 1.0.0–1.2.1 can be made to spin the event loop by a
+  crafted source map's section offsets. `npm audit fix` is offered and has not been tried.
+- Impact: small. The package runs only while building or testing the dashboard, on source maps the
+  project produces itself, and none of it reaches `server/public/` or the client package. The cost
+  today is a warning on every install that trains a reader to ignore the next one.
+
 ## An ingest key cannot be revoked except in SQL
 
 - Where: `server/scripts/issue-key.ts`, which ends "revoke the old one when you do"; `run`, which

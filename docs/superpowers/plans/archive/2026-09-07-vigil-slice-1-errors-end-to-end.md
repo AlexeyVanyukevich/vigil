@@ -33,16 +33,28 @@ reference application, whose interface is Russian. Vigil's screens are full of E
 traces, exception class names and module paths; Russian chrome around English payloads reads
 worse than an English tool. Recorded here so it is a decision, not a drift.
 
-**TypeScript.** `strict: true` plus `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`
-in `tsconfig.base.json`. No `any` in hand-written code — the only permitted occurrences are the
-`Kysely<any>` signatures Kysely's migration API requires.
+**The shared conventions live in `dev-kit`, not in this plan.** This repository imports them
+through `CLAUDE.md`. An implementer who needs one reads it directly, by path — a file read works
+whether or not a subagent inherits this project's memory files:
 
-**Modules.** `server/` and `client/` are `NodeNext`, so relative imports carry a `.js` extension
-even in a `.ts` file: `import { fingerprintOf } from '../shared/fingerprint.js'`. `web/` is
-bundler resolution and does not.
+| Rule | Path under `node_modules/dev-kit/` |
+| ---- | ---------------------------------- |
+| TypeScript settings, NodeNext `.js` imports, the `typebox` package | `rules/typescript.md` |
+| `{ error, message, details? }`, `additionalProperties: false` | `rules/http.md` |
+| `modules/<entity>/` split into four files | `rules/layout.md` |
+| Tests before implementation; real Postgres, never a mock | `rules/testing.md` |
+| Conventional Commits; the subject line is the whole message; merge by rebase | `rules/commits.md` |
+| Specs are decision records; `architecture.md` is authoritative | `rules/documentation.md` |
+| Refer to projects by role, not by name | `rules/writing.md` |
+| What a session-ending review must show | `rules/review.md` |
 
-**HTTP.** Errors keep the shape `{ error, message, details? }`. Every request body is a TypeBox
-schema with `additionalProperties: false` — unknown fields are rejected, never ignored.
+Restating any of them here would recreate the duplication `dev-kit` was built to end, and a copy
+drifts from its source without anyone noticing. **Everything below is vigil's own** — the
+constraints no other project shares.
+
+**One addition to the TypeScript rule, specific to this repository:** no `any` in hand-written
+code, the only permitted occurrences being the `Kysely<any>` signatures Kysely's migration API
+requires.
 
 **Table names are plural** — `apps`, `ingest_keys`, `issues`, `events`, `owners`, `sessions` —
 following the reference application, though §5 of the spec names them in the singular. Column
@@ -82,13 +94,29 @@ handling an ingest failure.
 point (all Slice 4); notification channels and the outbox (Slice 2); monitors, probes and
 incidents (Slice 3); retention pruning (Slice 4's neighbour, §14).
 
-**Commits.** Conventional Commits, `type(scope): subject`, imperative mood, lowercase, ≤72
-characters. **The subject line is the whole message: no body, no footers, no `Co-Authored-By`
-trailer** — the reference application's rule, settled on 2026-09-08 as the shared one across
-every project. Reasoning that outlives a commit belongs in `docs/architecture.md` or a spec,
-and a change that seems to need a paragraph is a change that wants splitting.
+**Before every commit:** `./run check` from the repository root. Commit format is
+`rules/commits.md`, above — the subject line is the whole message.
 
-**Before every commit:** `./run check` from the repository root.
+**No task may leave a command red.** `client/` is created in Task 9 and `web/` in Task 12, so
+until then **nothing may name them** — not a `run` scenario, not a root `package.json` script,
+not a `vitest.config.ts` key, not a `tsconfig` reference. A file or workspace named before it
+exists is not a harmless forward declaration: npm fails with `No workspaces found`, vitest
+fails to start, and `tsc` fails to resolve. The task that creates a workspace adds every
+reference to it in the same commit.
+
+`./run check` does not catch this on its own, because it deliberately calls the server suite
+directly rather than going through `./run test`. **Before committing, run every scenario the
+task claims to provide** — at minimum `./run check` and `./run test`.
+
+**The slice is built on `feat/slice-1-errors-end-to-end`**, kept current by rebasing onto `main`,
+never by merging `main` in. Every commit on it lands on `main` as written, so each one must pass
+`./run check` on its own — none of them is tidied away by a squash at the end.
+
+**`dev-kit` is pinned to `github:AlexeyVanyukevich/dev-kit#v1.2.1`** (commit `71cec2a`). It
+was `file:../dev-kit`, a symlink into the sibling checkout, until 2026-10-01, when that checkout
+moved to a breaking branch mid-slice and took every type-check and `./run` with it. The owner
+chose the pin. Do not move it inside this slice: adopting a newer dev-kit — including the
+sectioned layout under development — is its own change.
 
 **Ports, chosen so vigil and the reference application can run side by side:** server `4100`,
 Vite `5174`, compose Postgres `5435`.
@@ -97,15 +125,24 @@ Vite `5174`, compose Postgres `5435`.
 
 ## File Structure
 
+Files marked **(exists)** were created when this repository adopted `dev-kit`. Task 1 amends
+them; it does not write them again.
+
 ```
-run                              one entry point for every way of running the project
-package.json                     workspaces: server, client, web
-tsconfig.base.json               strict + noUncheckedIndexedAccess + exactOptionalPropertyTypes
+run                              (exists) bootstrap, then source dev-kit/sh/lib.sh
+                                 Task 1 adds the dev, test and migrate scenarios
+package.json                     (exists) Task 1 adds workspaces: server, client, web
+tsconfig.json                    (exists) extends dev-kit/tsconfig/node
+                                 Task 1 replaces its `files: []` placeholder
+.prettierignore .gitignore       (exists) copied from dev-kit; Task 1 appends two entries
 docker-compose.yml               postgres:16-alpine on 5435
 .env.example                     DATABASE_URL, PORT, LOG_LEVEL, SESSION_TTL_DAYS, caps
-.prettierrc .prettierignore .gitignore
-CONTRIBUTING.md                  vigil's conventions
 playwright.config.ts
+
+                                 No tsconfig.base.json — dev-kit/tsconfig/base carries it.
+                                 No .prettierrc — package.json names dev-kit/prettier.
+                                 No CONTRIBUTING.md — the conventions are dev-kit's rules,
+                                 imported by CLAUDE.md.
 
 server/
   src/config.ts                  env → Config, validated at startup
@@ -149,14 +186,28 @@ docs/architecture.md             written by the last task
 
 ---
 
-### Task 1: Repository skeleton and validated configuration
+### Task 1: Workspaces, the database service, and validated configuration
+
+This repository is no longer empty. It adopted `dev-kit` before this slice began, so the root
+already carries `package.json`, `tsconfig.json`, `run`, `.gitignore` and `.prettierignore`, and
+`./run check` passes against them today. **Amend those files; do not write them again.** Nothing
+in this task recreates a convention `dev-kit` owns.
 
 **Files:**
-- Create: `package.json`, `tsconfig.base.json`, `.prettierrc`, `.prettierignore`, `.gitignore`,
-  `.env.example`, `docker-compose.yml`, `run`, `CONTRIBUTING.md`
+- Modify: `package.json` — add `workspaces`, the `test`/`build` scripts, and the runtime
+  dependencies
+- Modify: `tsconfig.json` — replace the `files: []` placeholder with the workspace references
+- Modify: `.gitignore` — append the two entries this slice needs
+- Create: `.env.example`, `docker-compose.yml`
+- Modify: `run` — add the `dev`, `start`, `stop`, `test`, `migrate` and setup scenarios
 - Create: `server/package.json`, `server/tsconfig.json`, `server/vitest.config.ts`
 - Create: `server/src/config.ts`
 - Test: `server/tests/unit/config.test.ts`
+
+**Not created, and deliberately so:** `tsconfig.base.json` (`dev-kit/tsconfig/base` carries the
+strictness), `.prettierrc` (`package.json` already names `dev-kit/prettier`), and
+`CONTRIBUTING.md` (the conventions are `dev-kit`'s rules, imported by `CLAUDE.md`). Writing any
+of the three would recreate the duplication `dev-kit` exists to end.
 
 **Interfaces:**
 - Consumes: nothing.
@@ -166,83 +217,87 @@ docs/architecture.md             written by the last task
   `maxEventsPerBatch: number`, `maxStackBytes: number`, `maxContextBytes: number`.
   Every later task builds its test app from this shape.
 
-- [ ] **Step 1: Write the root files**
+- [ ] **Step 1: Amend the root files**
 
-`package.json`:
+`package.json` — the existing file gains `workspaces`, three scripts and the Playwright
+dependency. **Keep `"prettier": "dev-kit/prettier"` and the `dev-kit` devDependency exactly as
+they are.** The result:
 
 ```json
 {
   "name": "vigil",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
+  "description": "Health monitoring for the applications running on one host",
+  "license": "UNLICENSED",
   "workspaces": ["server", "client", "web"],
   "engines": { "node": ">=24.0.0" },
+  "prettier": "dev-kit/prettier",
   "scripts": {
-    "test": "npm run --workspace server test && npm run --workspace client test",
-    "test:ui": "playwright test",
-    "build": "npm run --workspace server build && npm run --workspace web build",
-    "check": "./run check"
+    "test": "npm run --workspace server test",
+    "build": "npm run --workspace server build",
+    "check": "./run check",
+    "format": "prettier --write ."
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "dev-kit": "file:../dev-kit",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2"
   }
 }
 ```
 
-`tsconfig.base.json`:
+**`tsconfig.json` needs no change.** Leave it exactly as it is, `files: []` and all. It
+type-checks nothing, which is correct: each workspace extends `dev-kit/tsconfig/node` or
+`/web` for itself, and the root has no runtime of its own to claim.
 
-```json
-{
-  "compilerOptions": {
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "target": "ES2023",
-    "skipLibCheck": true
-  }
+Project references were considered and rejected. They would require `composite: true` on every
+workspace, and `dev-kit/tsconfig/web` sets `noEmit: true` — a pairing TypeScript refuses. They
+would also force the root to name `./client` and `./web` before Tasks 9 and 12 create them,
+breaking the build from Task 1 until Task 12. Type-checking each workspace by name costs only
+incremental caching, which a repository this size does not need.
+
+Instead, `scenario_check` in `run` grows one line per workspace, added by the task that creates
+that workspace. After this task it reads:
+
+```bash
+scenario_check() {
+  need_node
+  need_deps
+
+  step "Checking formatting"
+  npx prettier --check .
+  ok "Formatting clean"
+
+  step "Type-checking"
+  ( cd server && npx tsc --noEmit )
+  ok "Types clean"
+
+  step "Tests"
+  npm run --workspace server test
 }
 ```
 
-`.prettierrc`:
+Task 9 adds `( cd client && npx tsc --noEmit )` and the client suite; Task 12 adds
+`( cd web && npx tsc --noEmit )`.
 
-```json
-{ "semi": false, "singleQuote": true, "printWidth": 100 }
-```
-
-`.prettierignore`:
+**`.prettierignore` and `.gitignore` already exist**, copied from `dev-kit/ignore/`. Leave
+`.prettierignore` alone. Append to `.gitignore` only the two entries this slice introduces:
 
 ```
-node_modules
-dist
-package-lock.json
-server/public
-test-results
-playwright-report
-.run
-```
-
-`.gitignore`:
-
-```
-node_modules/
-dist/
-build/
-.env
-.run/
-test-results/
-playwright-report/
-*.log
-.DS_Store
-
 # Written by the Playwright global setup so the specs can find the running stack.
 tests/ui/.runtime.json
-server/public/
 
-# Scratch for plan execution: ledgers, briefs, review packages. Git history is the record.
-.superpowers/
+# The built SPA, served by the server.
+server/public/
 ```
+
+`.prettierignore` needs no change: it already ignores `node_modules`, `dist`, `build`,
+`package-lock.json`, `test-results`, `playwright-report`, `.superpowers`, `.run`, and
+`docs/superpowers` — the last because a spec and a plan are dated records, and reformatting one
+rewrites a decision record to no benefit.
 
 `.env.example`:
 
@@ -282,30 +337,31 @@ volumes:
   db-data:
 ```
 
-- [ ] **Step 2: Write `run` and make it executable**
+- [ ] **Step 2: Extend the existing `run` with this slice's scenarios**
+
+`run` already exists and already sources the shared frame. **Do not rewrite it from scratch and
+do not redefine anything `lib.sh` provides** — `step`, `ok`, `note`, `die`, `load_env_file`,
+`need_docker`, `need_node`, `need_deps`, `need_env`, and the colour variables all come from
+there. Redefining one silently forks it from the source every other project shares.
+
+**`need_env` returns 1 when it creates `.env`,** so that a caller can print its own notes only
+on a first run. Under `set -euo pipefail` a bare `need_env` therefore aborts the script the
+first time anyone runs it — precisely on a fresh checkout. Every scenario below calls it as
+`need_env || note "…"`, which is safe because a non-zero status on the left of `||` is handled
+rather than fatal.
+
+Keep the first eight lines exactly as they are, add the constants, and add the scenarios below.
+The result opens like this:
 
 ```bash
 #!/usr/bin/env bash
-#
-# One entry point for every way of running this project.
-# `./run` with no arguments lists the scenarios.
-#
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")"
+cd "$(dirname "$0")"
 
-# `.env` read line by line rather than sourced, so the conventional precedence holds: command
-# line, then the file, then the defaults below. `. ./.env` assigns unconditionally and would let
-# the file override an explicit `PORT=4200 ./run dev`.
-load_env_file() {
-  [ -f .env ] || return 0
-  local line key
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in '' | \#*) continue ;; esac
-    key=${line%%=*}
-    [ -n "${!key:-}" ] && continue
-    export "$key=${line#*=}"
-  done < .env
-}
+# This script is what installs dependencies, so it cannot source out of node_modules before
+# that directory exists.
+[ -d node_modules ] || npm install
+source node_modules/dev-kit/sh/lib.sh
 
 load_env_file
 
@@ -314,50 +370,6 @@ WEB_PORT="${WEB_PORT:-5174}"
 DB_HOST_PORT=5435
 RUN_STATE=".run"
 COMPOSE_DB_URL="postgres://postgres:postgres@localhost:${DB_HOST_PORT}/vigil"
-
-if [ -t 1 ]; then
-  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; OFF=$'\033[0m'
-else
-  BOLD=''; DIM=''; RED=''; GREEN=''; YELLOW=''; OFF=''
-fi
-
-step() { printf '%s→ %s%s\n' "$BOLD" "$1" "$OFF"; }
-ok()   { printf '%s✓ %s%s\n' "$GREEN" "$1" "$OFF"; }
-note() { printf '%s  %s%s\n' "$DIM" "$1" "$OFF"; }
-
-# Fail with an instruction, not just a symptom.
-die() {
-  printf '%s✗ %s%s\n' "$RED" "$1" "$OFF" >&2
-  [ $# -gt 1 ] && printf '%s  %s%s\n' "$YELLOW" "$2" "$OFF" >&2
-  exit 1
-}
-
-need_docker() {
-  command -v docker >/dev/null 2>&1 ||
-    die "Docker is not installed." "Install Docker Desktop, then run this again."
-  docker info >/dev/null 2>&1 ||
-    die "Docker is installed but not running." "Start Docker Desktop and wait for it to report ready."
-}
-
-need_node() {
-  command -v node >/dev/null 2>&1 || die "Node is not installed." "Install Node 24 or newer."
-  local major
-  major="$(node -p 'process.versions.node.split(".")[0]')"
-  if [ "$major" -lt 24 ]; then
-    printf '%s! Node %s is older than the required 24.%s\n' "$YELLOW" "$(node -v)" "$OFF" >&2
-    note "nvm use   (or install Node 24) — continuing anyway"
-  fi
-}
-
-need_deps() { [ -d node_modules ] || { step "Installing dependencies"; npm install; }; }
-
-need_env() {
-  if [ ! -f .env ]; then
-    step "Creating .env from .env.example"
-    cp .env.example .env
-    note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
-  fi
-}
 
 # A Secure cookie is not stored by a browser that received it over plain http, and the failure
 # is silent: the owner signs in, appears to succeed, and is signed out on the next request.
@@ -411,35 +423,36 @@ run_migrations() {
 }
 
 scenario_dev() {
-  need_node; need_deps; need_env
+  need_node; need_deps
+  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
   start_db
   run_migrations
 
   export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
   export PORT="$APP_PORT"
 
+  # Task 12 adds the Vite half of this scenario, alongside the `web/` workspace it creates:
+  # a second background process on $WEB_PORT in the --bg branch, a second piped process in the
+  # foreground branch, and the `trap 'kill 0'` that takes the pair down together. Until then
+  # `./run dev` runs the API alone, because naming a workspace npm cannot find makes the whole
+  # scenario fail rather than start half of it.
+
   if [ "${1:-}" = "--bg" ]; then
     mkdir -p "$RUN_STATE"
     npm run --workspace server dev >"$RUN_STATE/server.log" 2>&1 & echo $! >"$RUN_STATE/server.pid"
-    npm run --workspace web dev -- --port "$WEB_PORT" >"$RUN_STATE/web.log" 2>&1 & echo $! >"$RUN_STATE/web.pid"
     ok "Running in the background"
-    note "http://localhost:${WEB_PORT}   logs: ${RUN_STATE}/*.log   stop: ./run stop"
+    note "http://localhost:${APP_PORT}   logs: ${RUN_STATE}/*.log   stop: ./run stop"
     return
   fi
 
-  ok "Server on :${APP_PORT}, dashboard on http://localhost:${WEB_PORT}"
-  note "Ctrl-C stops both"
-
-  # Either one dying takes the pair down — a half-running stack looks like a bug in the app
-  # rather than a stopped process.
-  trap 'kill 0' EXIT INT TERM
-  npm run --workspace server dev 2>&1 | sed "s/^/${DIM}[server]${OFF} /" &
-  npm run --workspace web dev -- --port "$WEB_PORT" 2>&1 | sed "s/^/${DIM}[web]   ${OFF} /" &
-  wait
+  ok "Server on :${APP_PORT}"
+  note "Ctrl-C stops it"
+  npm run --workspace server dev
 }
 
 scenario_start() {
-  need_node; need_deps; need_env
+  need_node; need_deps
+  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
   need_plain_http_cookie
   start_db
   run_migrations
@@ -480,25 +493,25 @@ scenario_test() {
   need_node; need_deps; need_docker
   step "Server suite (Testcontainers starts its own Postgres)"
   npm run --workspace server test
-  step "Client package suite (no server, no database)"
-  npm run --workspace client test
+  # Task 9 adds the client package suite here. Naming the workspace before Task 9 creates it
+  # makes `./run test` fail with "No workspaces found".
 }
 
-scenario_test_ui() {
-  need_node; need_deps; need_docker
-  step "Browser journeys against the whole product"
-  npx playwright test
-}
+# No `scenario_test_ui` yet. `playwright test` needs `playwright.config.ts`, which Task 14
+# creates along with the journeys it runs; offering the scenario before then is offering a
+# command that fails. Task 14 adds this function, its usage line and its dispatch entry.
 
 scenario_migrate() {
-  need_node; need_deps; need_env
+  need_node; need_deps
+  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
   start_db
   run_migrations
   ok "Migrations applied"
 }
 
 scenario_password() {
-  need_node; need_deps; need_env
+  need_node; need_deps
+  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
   start_db
   run_migrations
   # Invoked directly rather than through `npm run`: this reads a password from stdin, and npm's
@@ -507,14 +520,16 @@ scenario_password() {
 }
 
 scenario_app_add() {
-  need_node; need_deps; need_env
+  need_node; need_deps
+  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
   start_db
   run_migrations
   ( cd server && DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npx tsx scripts/add-app.ts "$@" )
 }
 
 scenario_key_issue() {
-  need_node; need_deps; need_env
+  need_node; need_deps
+  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
   start_db
   run_migrations
   ( cd server && DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npx tsx scripts/issue-key.ts "$@" )
@@ -524,12 +539,11 @@ scenario_check() {
   need_node; need_deps
   step "Types"
   ( cd server && npx tsc --noEmit )
-  ( cd client && npx tsc --noEmit )
-  ( cd web && npx tsc --noEmit )
+  # Task 9 adds client, Task 12 adds web.
   step "Formatting"
   npx prettier --check .
   step "Tests"
-  scenario_test
+  npm run --workspace server test
   ok "Everything is clean"
 }
 
@@ -544,13 +558,12 @@ usage() {
   cat <<TEXT
 ${BOLD}./run <scenario>${OFF}
 
-  ${BOLD}dev${OFF} [--bg]     Postgres, migrations, the server and Vite together
+  ${BOLD}dev${OFF} [--bg]     Postgres, migrations and the server
   ${BOLD}start${OFF} [--bg]   the built dashboard and API on one port
   ${BOLD}stop${OFF}           stop whatever ${BOLD}dev --bg${OFF} or ${BOLD}start --bg${OFF} left running
-  ${BOLD}test${OFF}           the server and client suites
-  ${BOLD}test:ui${OFF}        browser journeys against the whole product
-  ${BOLD}check${OFF}          types, formatting, and both suites
-  ${BOLD}build${OFF}          compile the server and build the dashboard
+  ${BOLD}test${OFF}           the server suite
+  ${BOLD}check${OFF}          types, formatting and tests
+  ${BOLD}build${OFF}          compile the server
   ${BOLD}migrate${OFF}        apply migrations to the local database
   ${BOLD}owner:password${OFF} set the owner's password (also signs every device out)
   ${BOLD}app:add${OFF}        register an application to be watched
@@ -568,7 +581,6 @@ case "$SCENARIO" in
   start)          scenario_start "$@" ;;
   stop)           scenario_stop ;;
   test)           scenario_test ;;
-  test:ui)        scenario_test_ui ;;
   check)          scenario_check ;;
   build)          scenario_build ;;
   migrate)        scenario_migrate ;;
@@ -624,13 +636,10 @@ Then: `chmod +x run`
 
 ```json
 {
-  "extends": "../tsconfig.base.json",
+  "extends": "dev-kit/tsconfig/node",
   "compilerOptions": {
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
     "outDir": "dist",
-    "rootDir": ".",
-    "types": ["node"]
+    "rootDir": "."
   },
   "include": ["src", "tests", "scripts"]
 }
@@ -643,7 +652,9 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    globalSetup: ['./tests/integration/global-setup.ts'],
+    // No `globalSetup` yet. It names a file Task 2 creates, and vitest fails to start when the
+    // path does not resolve — which would leave `./run check` red at the end of this task.
+    // Task 2 adds the line in the same step that writes the file.
     include: ['tests/**/*.test.ts'],
     testTimeout: 30_000,
     hookTimeout: 120_000,
@@ -761,29 +772,44 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
 
 - [ ] **Step 7: Run the test to verify it passes**
 
-Run: `cd server && npx vitest run tests/unit/config.test.ts`
-Expected: PASS, 6 tests.
+Run: `./run check`
+Expected: formatting clean, types clean, 6 tests passing.
 
-The `vitest.config.ts` names a global setup that does not exist yet, so run the file directly
-here. Task 2 creates it and `./run check` starts working end to end.
+**`vitest.config.ts` must not name a `globalSetup` in this task.** The integration harness does
+not exist until Task 2, and a config pointing at a missing file makes vitest fail to start — so
+`./run check` would be red at the end of Task 1, which Global Constraints and
+`node_modules/dev-kit/rules/commits.md` both forbid. Task 2 adds the `globalSetup` line in the
+same step that creates the file it names.
 
-- [ ] **Step 8: Write `CONTRIBUTING.md`**
+- [ ] **Step 8: Add the two conventions that are vigil's alone to `CLAUDE.md`**
 
-Record vigil's conventions, taking the commit-message rule from the owner's answer in Step 1.
-It must state, at minimum: English everywhere including the interface; the TypeScript settings;
-`NodeNext` on `server/` and `client/` and bundler resolution on `web/`; the stack; the
-`{ error, message, details? }` error shape and `additionalProperties: false`; the
-`modules/<area>/*.{repository,service,routes,schemas}.ts` layout; that `client/` imports nothing
-from `server/`; Conventional Commits; `./run check` before committing; tests before
-implementation; and that every slice gets a dated spec and plan, that neither is revised once
-the slice ships, and that the last task of every slice updates `docs/architecture.md`.
+There is no `CONTRIBUTING.md`, and this slice does not create one. Eight rule files already
+reach every session through `CLAUDE.md`, and restating them in a ninth place is the duplication
+`dev-kit` exists to end.
 
-- [ ] **Step 9: Format and commit**
+Two conventions are genuinely vigil's own, hold nowhere else, and so belong in `CLAUDE.md` under
+its existing `## Conventions` heading, below the imports:
+
+```markdown
+Two rules are vigil's own and are not in the shared kit:
+
+- **The dashboard interface is English**, unlike the reference application's. These screens are
+  full of English stack traces, exception class names and module paths; Russian chrome around
+  English payloads reads worse than an English tool.
+- **`client/` imports nothing from `server/`.** The client package ships to other people's
+  applications, so extracting it later must be a history rewrite rather than a rewrite.
+```
+
+- [ ] **Step 9: Format, check, and commit**
+
+`./run check` is the gate, not `prettier --write` alone: formatting can be clean while the
+project references fail to build.
 
 ```bash
 npx prettier --write .
+./run check
 git add -A
-git commit -m "build: scaffold the workspace and validated configuration"
+git commit -m "build: add the workspaces, database service and validated config"
 ```
 
 ---
@@ -794,6 +820,7 @@ git commit -m "build: scaffold the workspace and validated configuration"
 - Create: `server/src/db/schema.ts`, `server/src/db/client.ts`, `server/src/db/migrate.ts`,
   `server/src/db/migrations/index.ts`, `server/src/db/migrations/001_initial.ts`
 - Create: `server/tests/integration/global-setup.ts`, `server/tests/integration/helpers.ts`
+- Modify: `server/vitest.config.ts` — add the `globalSetup` line Task 1 left out (Step 4)
 - Test: `server/tests/integration/migrations.test.ts`
 
 **Interfaces:**
@@ -1187,7 +1214,21 @@ describe('001_initial', () => {
 })
 ```
 
-- [ ] **Step 4: Write the test harness**
+- [ ] **Step 4: Write the test harness, and wire it into `vitest.config.ts`**
+
+**First, add the line Task 1 deliberately left out.** `server/vitest.config.ts` has no
+`globalSetup` because the file it would name did not exist; this step creates that file, so the
+line goes in now, replacing the three-line comment that explains its absence:
+
+```ts
+export default defineConfig({
+  test: {
+    globalSetup: ['./tests/integration/global-setup.ts'],
+    include: ['tests/**/*.test.ts'],
+```
+
+Without it every integration test in this slice runs against no database and fails on a
+connection error, which reads as a broken migration rather than a missing line.
 
 `server/tests/integration/global-setup.ts`:
 
@@ -4735,6 +4776,11 @@ Its tests run with no server and no database.
 **Files:**
 - Create: `client/package.json`, `client/tsconfig.json`, `client/vitest.config.ts`
 - Create: `client/src/redact.ts`, `client/src/payload.ts`
+- Modify: `run` — this task creates the `client/` workspace, so it adds every reference to it
+  that earlier tasks deferred (Global Constraints, "No task may leave a command red"):
+  `( cd client && npx tsc --noEmit )` in `scenario_check`, and
+  `npm run --workspace client test` in `scenario_test`
+- Modify: root `package.json` — append `&& npm run --workspace client test` to `test`
 - Test: `client/tests/redact.test.ts`, `client/tests/payload.test.ts`
 
 **Interfaces:**
@@ -4781,14 +4827,11 @@ watches is a liability the applications did not ask for; `fetch` and `node:` bui
 
 ```json
 {
-  "extends": "../tsconfig.base.json",
+  "extends": "dev-kit/tsconfig/node",
   "compilerOptions": {
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
     "outDir": "dist",
     "rootDir": "src",
-    "declaration": true,
-    "types": ["node"]
+    "declaration": true
   },
   "include": ["src"]
 }
@@ -6256,6 +6299,13 @@ git commit -m "feat(client): add the node entry point and prove it against the e
 Overview, Monitors and Settings screens belong to Slices 2 and 3.
 
 **Files:**
+- Modify: `run` — this task creates the `web/` workspace, so it adds every reference to it that
+  earlier tasks deferred (Global Constraints, "No task may leave a command red"):
+  `( cd web && npx tsc --noEmit )` in `scenario_check`, and the Vite half of `scenario_dev` —
+  a second background process on `$WEB_PORT` in the `--bg` branch, a second piped process in
+  the foreground branch, and the `trap 'kill 0' EXIT INT TERM` that takes the pair down
+  together so a half-running stack cannot look like a bug in the app
+- Modify: root `package.json` — append `&& npm run --workspace web build` to `build`
 - Create: `web/package.json`, `web/tsconfig.json`, `web/vite.config.ts`, `web/index.html`
 - Create: `web/src/main.tsx`, `web/src/App.tsx`, `web/src/api.ts`, `web/src/errors.ts`,
   `web/src/styles.css`, `web/src/routes/Login.tsx`
@@ -6305,16 +6355,8 @@ Overview, Monitors and Settings screens belong to Slices 2 and 3.
 
 ```json
 {
-  "extends": "../tsconfig.base.json",
-  "compilerOptions": {
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "noEmit": true,
-    "types": ["vite/client"],
-    "verbatimModuleSyntax": true
-  },
+  "extends": "dev-kit/tsconfig/web",
+  "compilerOptions": { "types": ["vite/client"] },
   "include": ["src", "vite.config.ts"]
 }
 ```
@@ -7404,6 +7446,20 @@ by morning the owner knows what, how many times, and where.
 **Files:**
 - Create: `playwright.config.ts`
 - Create: `tests/ui/global-setup.ts`, `tests/ui/helpers.ts`, `tests/ui/issues.spec.ts`
+- Modify: `run` — this task creates `playwright.config.ts` and the journeys it runs, so it adds
+  every reference earlier tasks deferred (Global Constraints, "No task may leave a command
+  red"): the `scenario_test_ui` function, its `${BOLD}test:ui${OFF}` usage line, and its
+  `test:ui) scenario_test_ui ;;` dispatch entry
+
+  ```bash
+  scenario_test_ui() {
+    need_node; need_deps; need_docker
+    step "Browser journeys against the whole product"
+    npx playwright test
+  }
+  ```
+- Modify: root `package.json` — add `"test:ui": "playwright test"`. `@playwright/test` is
+  already a devDependency from Task 1; only the script is missing.
 
 **Interfaces:**
 - Consumes: the built product — `./run build`, the compose database, and the setup scripts from
@@ -7690,9 +7746,12 @@ git commit -m "test(ui): drive the driving case through a browser"
 
 ### Task 15: Documentation, and archiving this plan
 
-The reference application's rule, adopted in Task 1's `CONTRIBUTING.md`: the last task of every
-slice updates `docs/architecture.md` and, where running or deploying changed, `README.md`, then
+`dev-kit/rules/documentation.md`, which this repository imports: the last task of every slice
+updates `docs/architecture.md` and, where running or deploying changed, `README.md`, then
 archives the plan. Not a follow-up — a task with the same standing as the code.
+
+`README.md` currently says "**Designed, not built.** Nothing here runs yet." That sentence stops
+being true in this task, and it is the first thing a reader sees.
 
 **Files:**
 - Create: `docs/architecture.md`
@@ -7804,6 +7863,40 @@ git add -A
 git commit -m "docs: describe what slice 1 built and archive its plan"
 ```
 
+- [ ] **Step 7: Write the slice review**
+
+`dev-kit/rules/review.md` binds this, and it is the last thing the slice owes. Read the rule
+before writing: it is specific about what a review must contain and about what disqualifies one.
+
+The review covers **the whole slice, not this task** — one list, at the end. It must show the
+changes themselves rather than describe them, and state three things beyond the content:
+
+- **What was verified** — the command that ran and the output it produced. Step 5's transcript
+  is the evidence; paste what it actually printed, not a summary of it.
+- **What was decided without being asked** — every deviation from this plan, and why. A fresh
+  implementer made choices at every task; this is the only place they reach a reader.
+- **What is still unproven** — anything documented but untested, skipped, or working only on the
+  machine it was written on. The `file:../dev-kit` dependency belongs here by name, and so does
+  anything Slice 1 deferred to Slices 2–4.
+
+A passing `./run check` is not approval, and a review that reads as uniformly successful is a
+review that has been edited.
+
+- [ ] **Step 8: Merge by rebase, once the review is approved**
+
+```bash
+git fetch origin
+git rebase origin/main              # then ./run check again, against the rebased tree
+git push -u origin feat/slice-1-errors-end-to-end
+gh pr create --fill
+gh pr merge --rebase --delete-branch
+```
+
+`rules/commits.md` forbids the other two ways in. A squash folds the slice's commits into one
+with a subject that rule rejects, and a merge commit adds one. When
+superpowers:finishing-a-development-branch offers a local merge, decline it: the PR's rebase merge
+is the only route to `main`.
+
 ---
 
 ## Self-Review
@@ -7830,10 +7923,34 @@ in Global Constraints so no task drifts into them.
    screen §11 describes. Task 5's preamble. §15 scopes Slice 1's dashboard to login, list and
    detail, so Settings belongs with the channels that need it in Slice 2.
 
-**One question this plan originally left open** — whether vigil's `CONTRIBUTING.md` forbids a
-commit body and `Co-Authored-By` trailer — was settled on 2026-09-08 while designing
-`dev-kit`: it does, and that is now the shared rule across every project. Global Constraints
-states it, and Task 1 Step 8 writes it into `CONTRIBUTING.md`.
+**One question this plan originally left open** — whether vigil forbids a commit body and a
+`Co-Authored-By` trailer — was settled on 2026-09-08 while designing `dev-kit`: it does. It is
+no longer vigil's question at all. `dev-kit/rules/commits.md` holds the answer for every
+project, and `CLAUDE.md` imports it.
+
+---
+
+## Revision, 2026-09-25
+
+This plan was written on 2026-09-07 against an empty repository. Between then and now, `dev-kit`
+was built and this repository adopted it, which made parts of the plan describe work already
+done and other parts describe work that should never happen. The spec was re-validated at the
+same time and **needed no change** — it is a decision record, still a true account of what was
+decided on 2026-09-05, and `rules/documentation.md` forbids revising one.
+
+What changed here, and why:
+
+| Change | Reason |
+| ------ | ------ |
+| Global Constraints no longer restate the TypeScript, module, HTTP and commit rules | All four are now `dev-kit` rules imported by `CLAUDE.md`. A copy drifts from its source; the constraints table points at the files by path instead, which works whether or not a subagent inherits this project's memory. |
+| Task 1 amends the root files rather than creating them | `package.json`, `tsconfig.json`, `run`, `.gitignore` and `.prettierignore` already exist and already pass `./run check`. |
+| `tsconfig.base.json` and `.prettierrc` are gone | `dev-kit/tsconfig/base` and `dev-kit/prettier` carry them. The three workspace configs now extend `dev-kit/tsconfig/node` or `/web`. |
+| `CONTRIBUTING.md` is never written | Its whole content was the conventions that now live in `dev-kit`. Task 1 Step 8 adds to `CLAUDE.md` only the two rules that are vigil's alone. |
+| Task 1 Step 2 extends `run` instead of writing it | The script exists and sources `dev-kit/sh/lib.sh`. The plan's version inlined nine functions the library now provides. |
+| Every `need_env` call site became `need_env \|\| note "…"` | **A defect, not a tidy-up.** The library's `need_env` returns 1 when it creates `.env`, so a bare call under `set -euo pipefail` aborted the script on a fresh checkout — the first run by a new reader. |
+| Task 15 gained Step 7, the slice review | `dev-kit/rules/review.md` postdates this plan and binds the work. |
+| Global Constraints records the `file:../dev-kit` dependency | It is neither install form `dev-kit`'s README sanctions, so it needs to be a decision rather than an accident. |
+| The slice names its branch, and Task 15 gained Step 8, the rebase merge | `dev-kit/rules/commits.md` gained a merge rule on 2026-09-25. It forbids squash merges — the kind that landed this repository's first pull request as `Build/adopt dev kit (#1)` — and sets the branch form `<type>/<slug>`, which the slice branch was renamed to. |
 
 **Placeholder scan.** No `TBD` or `TODO`. Four places name a decision the implementer makes from
 what they observe rather than from a guess, each with the observation that settles it: Ajv's

@@ -21,3 +21,12 @@ playwright-report/
 
 # Scratch for plan execution: ledgers, briefs, review packages. Git history is the record.
 .superpowers/
+
+# Written by the Playwright global setup so the specs can find the running stack.
+tests/ui/.runtime.json
+
+# The built SPA, served by the server.
+server/public/
+
+# Scratch written by the Playwright MCP browser tool: page snapshots and console logs.
+.playwright-mcp/

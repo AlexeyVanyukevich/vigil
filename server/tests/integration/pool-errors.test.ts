@@ -99,7 +99,7 @@ async function waitForBlockedBackend(): Promise<void> {
 interface Case {
   name: string
   /** Leaves the server's connection in the state under test, then terminates its backend. */
-  breakConnection: (base: string) => Promise<() => Promise<number>>
+  breakConnection: (base: string) => Promise<(() => Promise<number>) | undefined>
 }
 
 // The two states a pooled connection is in when Postgres goes away: the pool holds it, or a
@@ -111,7 +111,8 @@ const cases: Case[] = [
       expect((await askForSession(base)).status).toBe(401)
       const terminated = await terminateBackends()
       expect(terminated.rows.length).toBeGreaterThan(0)
-      return async () => 401
+      // No request holds the connection, so there is no in-flight answer to check.
+      return undefined
     },
   },
   {
@@ -154,8 +155,9 @@ describe.each(cases)('a connection that fails while $name', ({ breakConnection }
     const logged = logLines().find((line) => line.err?.code === '57P01')
     expect(logged?.level).toBe(50)
 
-    // The request that held the connection answers rather than hangs (an idle one has none).
-    expect([401, 500]).toContain(await outcome())
+    // The request that held the connection answers rather than hangs, and with a server error:
+    // nothing on its path may turn a database failure into "not signed in".
+    if (outcome !== undefined) expect(await outcome()).toBe(500)
 
     // Still alive, and the pool opened a fresh connection for the next query.
     expect(child?.exitCode).toBeNull()

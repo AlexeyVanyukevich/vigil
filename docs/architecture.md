@@ -75,10 +75,11 @@ base64url), prints it once, and stores only its SHA-256 digest in `ingest_keys`.
 checks the key in its own `onRequest` hook (`server/src/modules/ingest/ingest.routes.ts`), before
 the body is read, so a caller without a key never costs a body parse. The key is looked up by
 digest (`findLiveKey` in `server/src/modules/ingest/key.repository.ts`), and a revoked key
-resolves to nothing. A missing, unknown or revoked key all answer `401 unauthorized`. **The key
-names the application:** `app_id` comes from the key row and never from the request, so a key
-leaked from one application cannot write events for another. A key cannot read anything. Its
-`last_used_at` is stamped at most once an hour.
+resolves to nothing. A missing, malformed, unknown or revoked key all answer `401 unauthorized`
+with the same message, so the answer does not say which keys exist. **The key names the
+application:** `app_id` comes from the key row and never from the request, so a key leaked from
+one application cannot write events for another. A key cannot read anything. Its `last_used_at`
+is stamped at most once an hour.
 
 **The owner's session.** `./run owner:password` stores an argon2id hash of a password of at
 least 12 characters (`server/src/modules/auth/password.ts`) and deletes every session, signing

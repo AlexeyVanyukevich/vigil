@@ -13,6 +13,10 @@ declare module 'fastify' {
   }
 }
 
+// One answer for a missing, malformed, unknown or revoked key (`rules/http.md`): telling them
+// apart would let a caller probe which keys exist.
+const KEY_REFUSED = 'A valid ingest key is required'
+
 /**
  * Not under `/api`, and deliberately so: the guard in `modules/auth/guard.ts` protects `/api`
  * with a cookie, and an application must never be asked for one. This route authenticates on
@@ -41,12 +45,10 @@ export function registerIngest(instance: FastifyInstance, service: IngestService
         // identifier the sender controls is an application identifier an attacker controls.
         const header = request.headers.authorization
         const token = header?.startsWith('Bearer ') === true ? header.slice(7).trim() : undefined
-        if (token === undefined || token === '') {
-          throw new UnauthorizedError('An ingest key is required')
-        }
+        if (token === undefined || token === '') throw new UnauthorizedError(KEY_REFUSED)
 
         const key = await findLiveKey(app.db, token)
-        if (key === undefined) throw new UnauthorizedError('This ingest key is not valid')
+        if (key === undefined) throw new UnauthorizedError(KEY_REFUSED)
 
         request.ingestKey = key
       },
@@ -56,7 +58,7 @@ export function registerIngest(instance: FastifyInstance, service: IngestService
       // keeps this handler correct even if the hook above it is ever changed to skip resolving
       // a key under some condition.
       const key = request.ingestKey
-      if (key === undefined) throw new UnauthorizedError('An ingest key is required')
+      if (key === undefined) throw new UnauthorizedError(KEY_REFUSED)
 
       // Slice 4 puts the browser policy — origin allowlist, rate limit, quota, extension
       // filtering — behind `key.kind === 'browser'` here. Slice 1 issues only server keys.

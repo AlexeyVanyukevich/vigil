@@ -102,27 +102,51 @@ afterAll(async () => {
   await closeTestDb()
 })
 
+// Every refusal answers the same status and the same body, whatever was wrong with the key
+// (`rules/http.md`): a difference between "missing" and "unknown" is a probe for which keys
+// exist. One expected body for every row is what says so.
+const KEY_REFUSED = { error: 'unauthorized', message: 'A valid ingest key is required' }
+
+interface KeyRefusalCase {
+  name: string
+  /** The Authorization header to send, given the application's live key; none when undefined. */
+  authorization: (live: string) => string | undefined
+  url?: (live: string) => string
+  before?: () => Promise<void>
+}
+
+const KEY_REFUSAL_CASES: KeyRefusalCase[] = [
+  { name: 'is required', authorization: () => undefined },
+  { name: 'must be sent as a Bearer token', authorization: (live) => `Basic ${live}` },
+  { name: 'must not be empty', authorization: () => 'Bearer ' },
+  { name: 'must be well formed', authorization: () => 'Bearer not-a-key' },
+  { name: 'must be one that exists', authorization: () => `Bearer ${mintIngestKey()}` },
+  {
+    name: 'must not be revoked',
+    authorization: (live) => `Bearer ${live}`,
+    before: async () => {
+      await db().updateTable('ingest_keys').set({ revoked_at: new Date() }).execute()
+    },
+  },
+  {
+    name: 'is not read from a query string',
+    authorization: () => undefined,
+    url: (live) => `/ingest/events?key=${live}`,
+  },
+]
+
 describe('the key', () => {
-  it('is required', async () => {
-    expect((await post(batch(), null)).statusCode).toBe(401)
-  })
-
-  it('must be one that exists', async () => {
-    expect((await post(batch(), mintIngestKey())).statusCode).toBe(401)
-  })
-
-  it('must not be revoked', async () => {
-    await db().updateTable('ingest_keys').set({ revoked_at: new Date() }).execute()
-    expect((await post(batch())).statusCode).toBe(401)
-  })
-
-  it('is not read from a query string or a body field', async () => {
+  it.each(KEY_REFUSAL_CASES)('$name, and is refused like every other bad key', async (row) => {
+    await row.before?.()
+    const authorization = row.authorization(key)
     const response = await app.inject({
       method: 'POST',
-      url: `/ingest/events?key=${key}`,
+      url: row.url?.(key) ?? '/ingest/events',
+      ...(authorization === undefined ? {} : { headers: { authorization } }),
       payload: batch(),
     })
     expect(response.statusCode).toBe(401)
+    expect(response.json()).toEqual(KEY_REFUSED)
   })
 
   // The property the trust boundary rests on: a key leaked from the least important

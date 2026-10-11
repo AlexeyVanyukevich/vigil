@@ -1,5 +1,0 @@
-{
-  "extends": "dev-kit/tsconfig/web",
-  "compilerOptions": { "types": ["vite/client"] },
-  "include": ["src", "tests", "vite.config.ts", "vitest.config.ts"]
-}

@@ -24,12 +24,3 @@ restating it here.
 @node_modules/dev-kit/rules/documentation.md
 @node_modules/dev-kit/rules/writing.md
 @node_modules/dev-kit/rules/review.md
-@node_modules/dev-kit/rules/backlog.md
-
-Two rules are vigil's own and are not in the shared kit:
-
-- **The dashboard interface is English**, unlike the reference application's. These screens are
-  full of English stack traces, exception class names and module paths; Russian chrome around
-  English payloads reads worse than an English tool.
-- **`client/` imports nothing from `server/`.** The client package ships to other people's
-  applications, so extracting it later must be a history rewrite rather than a rewrite.

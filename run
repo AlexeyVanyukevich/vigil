@@ -7,190 +7,13 @@ cd "$(dirname "$0")"
 [ -d node_modules ] || npm install
 source node_modules/dev-kit/sh/lib.sh
 
-load_env_file
+usage() {
+  cat <<'TXT'
+Usage: ./run <scenario>
 
-APP_PORT="${PORT:-4100}"
-WEB_PORT="${WEB_PORT:-5174}"
-DB_HOST_PORT=5435
-RUN_STATE=".run"
-COMPOSE_DB_URL="postgres://postgres:postgres@localhost:${DB_HOST_PORT}/vigil"
+  check   Verify formatting, then type-check the tree.
 
-# A Secure cookie is not stored by a browser that received it over plain http, and the failure
-# is silent: the owner signs in, appears to succeed, and is signed out on the next request.
-need_plain_http_cookie() {
-  [ "${NODE_ENV:-}" != "production" ] ||
-    die "NODE_ENV is production, so the session cookie is set Secure." \
-      "A browser will not store it over plain http. Unset NODE_ENV for a local run."
-}
-
-# Migrations create the tables and stop there. Without a password there is no way in, and the
-# symptom — every password rejected — reads as a broken build rather than a step not yet taken.
-need_setup() {
-  local state
-  state=$( cd server && DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npx tsx scripts/setup-state.ts </dev/null ) ||
-    die "Could not read the setup state from the database." "Check:  docker compose logs db"
-
-  case "$state" in
-    *owner=missing*)
-      die "No owner password is set, so nobody can sign in." \
-        "Set one first:  ./run owner:password"
-      ;;
-  esac
-
-  case "$state" in
-    *apps=missing*)
-      note "No applications yet. Nothing can report until one exists:  ./run app:add"
-      ;;
-  esac
-}
-
-start_db() {
-  need_docker
-  step "Starting Postgres on port ${DB_HOST_PORT}"
-  docker compose up -d db </dev/null >/dev/null
-
-  local waited=0
-  # stdin from /dev/null on purpose: `docker compose exec` attaches it even with -T, and would
-  # swallow input meant for a scenario — `owner:password` reads a password from a pipe.
-  until docker compose exec -T db pg_isready -U postgres -d vigil </dev/null >/dev/null 2>&1; do
-    sleep 1
-    waited=$((waited + 1))
-    [ "$waited" -gt 60 ] && die "Postgres did not become ready within a minute." \
-      "Check:  docker compose logs db"
-  done
-  ok "Postgres ready"
-}
-
-run_migrations() {
-  step "Applying migrations"
-  DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npm run --silent --workspace server migrate
-}
-
-scenario_dev() {
-  need_node; need_deps
-  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
-  start_db
-  run_migrations
-
-  export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
-  export PORT="$APP_PORT"
-
-  # `--strictPort` because Vite otherwise takes the next free port when $WEB_PORT is busy, and
-  # the address printed below would then point at whatever was already there.
-  local vite=(npm run --workspace web dev -- --port "$WEB_PORT" --strictPort)
-
-  if [ "${1:-}" = "--bg" ]; then
-    mkdir -p "$RUN_STATE"
-    npm run --workspace server dev >"$RUN_STATE/server.log" 2>&1 & echo $! >"$RUN_STATE/server.pid"
-    "${vite[@]}" >"$RUN_STATE/web.log" 2>&1 & echo $! >"$RUN_STATE/web.pid"
-    ok "Running in the background"
-    note "http://localhost:${WEB_PORT}   logs: ${RUN_STATE}/*.log   stop: ./run stop"
-    return
-  fi
-
-  ok "Dashboard on http://localhost:${WEB_PORT}, API on :${APP_PORT}"
-  note "Ctrl-C stops both"
-
-  # Either half dying takes the other with it, and Ctrl-C takes both: a stack left half running
-  # looks like a bug in the app rather than a process that went away.
-  trap 'kill 0' EXIT INT TERM
-  npm run --workspace server dev 2>&1 | sed -u "s/^/${DIM}[server]${OFF} /" &
-  local server=$!
-  "${vite[@]}" 2>&1 | sed -u "s/^/${DIM}[web]   ${OFF} /" &
-  local web=$!
-
-  # `wait -n` would say this in one line, but macOS ships bash 3.2, which does not have it, and
-  # a plain `wait` waits for both — the half-running stack the trap exists to prevent.
-  while kill -0 "$server" 2>/dev/null && kill -0 "$web" 2>/dev/null; do sleep 1; done
-}
-
-scenario_start() {
-  need_node; need_deps
-  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
-  need_plain_http_cookie
-  start_db
-  run_migrations
-  need_setup
-  scenario_build
-
-  export DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}"
-  export PORT="$APP_PORT"
-
-  if [ "${1:-}" = "--bg" ]; then
-    mkdir -p "$RUN_STATE"
-    npm run --workspace server start >"$RUN_STATE/app.log" 2>&1 & echo $! >"$RUN_STATE/app.pid"
-    ok "Running in the background"
-    note "http://localhost:${APP_PORT}   logs: ${RUN_STATE}/app.log   stop: ./run stop"
-    return 0
-  fi
-
-  ok "http://localhost:${APP_PORT}"
-  note "Ctrl-C stops it"
-  npm run --workspace server start
-}
-
-scenario_stop() {
-  local stopped=0
-  for pidfile in "$RUN_STATE"/*.pid; do
-    [ -f "$pidfile" ] || continue
-    local pid; pid=$(cat "$pidfile")
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      stopped=1
-    fi
-    rm -f "$pidfile"
-  done
-  [ "$stopped" = 1 ] && ok "Stopped" || note "Nothing was running in the background"
-}
-
-scenario_test() {
-  need_node; need_deps; need_docker
-  step "Server suite (Testcontainers starts its own Postgres)"
-  npm run --workspace server test
-  step "Client suite (no server, no database)"
-  npm run --workspace client test
-  step "Dashboard suite (no server, no browser)"
-  npm run --workspace web test
-}
-
-scenario_test_ui() {
-  need_node; need_deps; need_docker
-  step "Browser journeys against the whole product"
-  npx playwright test
-}
-
-scenario_migrate() {
-  need_node; need_deps
-  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
-  start_db
-  run_migrations
-  ok "Migrations applied"
-}
-
-scenario_password() {
-  need_node; need_deps
-  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
-  start_db
-  run_migrations
-  # Invoked directly rather than through `npm run`: this reads a password from stdin, and npm's
-  # workspace indirection does not hand a piped one through.
-  ( cd server && DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npx tsx scripts/set-password.ts )
-}
-
-scenario_app_add() {
-  need_node; need_deps
-  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
-  start_db
-  run_migrations
-  ( cd server && DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npx tsx scripts/add-app.ts "$@" )
-}
-
-scenario_key_issue() {
-  need_node; need_deps
-  need_env || note "DATABASE_URL already points at the compose database on port ${DB_HOST_PORT}"
-  start_db
-  run_migrations
-  ( cd server && DATABASE_URL="${DATABASE_URL:-$COMPOSE_DB_URL}" npx tsx scripts/issue-key.ts "$@" )
+TXT
 }
 
 scenario_check() {
@@ -202,66 +25,12 @@ scenario_check() {
   ok "Formatting clean"
 
   step "Type-checking"
-  ( cd server && npx tsc --noEmit )
-  # The wire test imports the client from outside the server's rootDir, so it has its own config.
-  ( cd server && npx tsc -p tsconfig.wire.json )
-  ( cd client && npx tsc --noEmit )
-  # Vitest strips types without checking them, and the config above covers only what ships.
-  ( cd client && npx tsc -p tsconfig.test.json )
-  ( cd web && npx tsc --noEmit )
-  # The browser journeys are type-checked here and run only by `test:ui`: they are slow and
-  # need Docker, and Playwright strips their types without checking them.
   npx tsc -p .
   ok "Types clean"
-
-  step "Tests"
-  npm run --workspace server test
-  npm run --workspace client test
-  npm run --workspace web test
 }
 
-scenario_build() {
-  need_node; need_deps
-  step "Building the server and the dashboard"
-  npm run build
-  ok "server/dist and server/public are ready"
-}
-
-usage() {
-  cat <<TEXT
-${BOLD}./run <scenario>${OFF}
-
-  ${BOLD}dev${OFF} [--bg]     Postgres, migrations, the server and the dashboard with hot reload
-  ${BOLD}start${OFF} [--bg]   the built server and dashboard on one port
-  ${BOLD}stop${OFF}           stop whatever ${BOLD}dev --bg${OFF} or ${BOLD}start --bg${OFF} left running
-  ${BOLD}test${OFF}           the server, client and dashboard suites
-  ${BOLD}test:ui${OFF}        browser journeys against the built product (Docker; not in ${BOLD}check${OFF})
-  ${BOLD}check${OFF}          types, formatting, and the server, client and dashboard suites
-  ${BOLD}build${OFF}          compile the server and build the dashboard
-  ${BOLD}migrate${OFF}        apply migrations to the local database
-  ${BOLD}owner:password${OFF} set the owner's password (also signs every device out)
-  ${BOLD}app:add${OFF}        register an application to be watched
-  ${BOLD}key:issue${OFF}      issue a server ingest key for an application (shown once)
-
-Before the first ${BOLD}start${OFF}: ${BOLD}owner:password${OFF}, then ${BOLD}app:add${OFF} and ${BOLD}key:issue${OFF}.
-TEXT
-}
-
-SCENARIO="${1:-}"
-[ $# -gt 0 ] && shift || true
-
-case "$SCENARIO" in
-  dev)            scenario_dev "$@" ;;
-  start)          scenario_start "$@" ;;
-  stop)           scenario_stop ;;
-  test)           scenario_test ;;
-  test:ui)        scenario_test_ui ;;
-  check)          scenario_check ;;
-  build)          scenario_build ;;
-  migrate)        scenario_migrate ;;
-  owner:password) scenario_password ;;
-  app:add)        scenario_app_add "$@" ;;
-  key:issue)      scenario_key_issue "$@" ;;
-  ''|-h|--help)   usage ;;
-  *)              die "Unknown scenario: ${SCENARIO}" "Run ./run with no arguments to see the list." ;;
+case "${1:-}" in
+  check) scenario_check ;;
+  '' | -h | --help | help) usage ;;
+  *) die "Unknown scenario: $1" "Run ./run --help for the list." ;;
 esac

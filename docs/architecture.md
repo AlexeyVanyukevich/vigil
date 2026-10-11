@@ -59,8 +59,9 @@ Every error response has the shape `{ "error": "<code>", "message": "…", "deta
 places build them: the error handler in `server/src/shared/errors.ts`, for whatever a route, a
 hook or a schema throws, and the not-found handler in `server/src/app.ts`, for the JSON 404 under
 `/api` and `/ingest`. One answer escapes both: a path with a malformed percent-escape is refused by
-Fastify before routing, in Fastify's own shape (`FST_ERR_BAD_URL`; see `docs/backlog.md`). Code lives in `server/src/modules/<entity>/`, split into
-routes, schemas, service and repository files where a module needs them.
+Fastify before routing, in Fastify's own shape (`FST_ERR_BAD_URL`; see `docs/backlog.md`). Code
+lives in `server/src/modules/<entity>/`, split into routes, schemas, service and repository files
+where a module needs them.
 
 ## The two credentials
 
@@ -331,8 +332,19 @@ come from the `dev-kit` package, installed from its Git repository at tag `v1.2.
 
 There is no deployment artefact yet: no container image, no service definition, and `./run start`
 refuses `NODE_ENV=production`, so a deployment builds with `./run build` and starts the built
-server itself (`npm run --workspace server start`), with the configuration above in its
-environment. The design record requires a public hostname over TLS, which puts a reverse proxy in
+server itself, with the configuration above in its environment. A fresh database has no tables
+and no owner, so the order is: build, apply the migrations, set the owner's password, then start.
+
+    ./run build
+    npm run --workspace server migrate
+    printf '%s' "$OWNER_PASSWORD" | (cd server && npx tsx scripts/set-password.ts)
+    npm run --workspace server start
+
+The migrate script and `set-password.ts` read `DATABASE_URL` and need the workspace's
+dependencies installed, since `tsx` is a development dependency. The password is read from
+standard input when it is not a terminal, must be at least 12 characters, and signs every device
+out; run again, it changes the password. `./run migrate` and `./run owner:password` do the same
+for the compose database but also start it, so a deployment does not use them. The design record requires a public hostname over TLS, which puts a reverse proxy in
 front of vigil. Four things must then be right, and each fails without an error at start-up:
 
 - **The proxy terminates TLS** on the public hostname and forwards to vigil's port. Without it,

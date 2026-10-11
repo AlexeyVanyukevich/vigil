@@ -3,6 +3,173 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## Two installed crash reporters that each exit only when alone keep a crashed process alive
+
+- Where: `client/src/node.ts`, `onUncaught`, `othersOn('uncaughtException', onUncaught)`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: vigil ends the process after an uncaught exception only when its listener is the sole
+  `uncaughtException` listener, because that is when Node would have exited. Another crash
+  reporter that follows the same rule (one widely used error-tracking SDK is said to; not
+  checked) defers to vigil while vigil defers to it, and neither exits. Reproduced with a stand-in
+  for the other reporter: `install()` vigil, add
+  `process.on('uncaughtException', () => { if (process.listenerCount('uncaughtException') === 1) process.exit(1) })`,
+  then `setTimeout(() => { throw new Error('x') })`. Node alone exits 1. With both, a script exits
+  0, and with an interval holding the event loop open, as a server's does, the process was still
+  running three seconds after the crash.
+- Impact: an application running vigil beside another such reporter carries on after a crash, so
+  its supervisor never restarts it, and a script's crash reads as success. The design record
+  chose vigil instead of a hosted error tracker for these applications, so co-installation is
+  outside the design, which is why the rule was kept. Telling another reporter's listener from the
+  host's own would need that reporter's internals.
+
+## The list and the detail never refresh while the tab keeps focus
+
+- Where: `web/src/main.tsx`, the `QueryClient`'s `defaultOptions.queries`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: queries set `staleTime` and `refetchOnWindowFocus` but no `refetchInterval`. Open the
+  issues list on a screen and leave it focused: new issues and new counts never appear, while
+  `useNow` keeps advancing the "ago" labels beside the stale counts.
+- Impact: a dashboard left open answers "is it still happening" with a frozen snapshot that looks
+  live. A `refetchInterval` of about 30 seconds on the list and the detail would fix it.
+
+## A client clock set in the future pins `last_seen_at` there
+
+- Where: `server/src/modules/ingest/ingest.service.ts`, where `occurred_at` becomes `occurredAt` and
+  feeds `greatest(last_seen_at, …)`; `web/src/format.ts`, `relativeTime`, where a negative age
+  reads "just now"
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: `occurred_at` is taken from the client unclamped. Send one event dated a year ahead:
+  `greatest()` keeps that time as `last_seen_at` from then on, and the dashboard shows the issue as
+  "last seen just now" until the date passes, however long ago it actually stopped.
+- Impact: low while every key is a server key on one host, whose clocks agree; certain once
+  browser keys arrive in Slice 4, since browser clocks are often wrong. Clamp to `received_at`
+  plus a small skew for the issue's timestamps, keeping the raw value on the event. Take it into
+  Slice 4.
+
+## The session's sliding expiry never reaches the browser
+
+- Where: `server/src/modules/auth/auth.routes.ts`, the login handler, the only place that sets the
+  cookie; `server/src/modules/auth/auth.service.ts`, `resolve`, which slides `expires_at`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: the cookie's `Max-Age` is set once, at sign-in. `resolve` moves the session's expiry
+  forward on the server at most hourly, but never re-issues the cookie. So the browser drops the
+  cookie `SESSION_TTL_DAYS` after sign-in, however active the owner has been, and the slide has no
+  visible effect.
+- Impact: the owner is signed out every 30 days regardless of use, where the design record asks
+  for a sliding session. Setting the cookie again whenever the slide happens would fix it.
+
+## A failed migration loses its cause, and `./run` prints npm's raw error
+
+- Where: `server/src/db/migrate.ts`, `runMigrations`; `run`, `run_migrations`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: `runMigrations` throws `Migration "x" failed` on the first errored result, before it
+  reaches `if (error) throw error`, so the SQL or connection error that made it fail is thrown
+  away. `run_migrations` then has no `die` wrapper, unlike `start_db` and `need_setup`, so the owner
+  sees npm's stack trace with neither the cause nor an instruction.
+- Impact: a migration that fails on a real database says only which migration, never why.
+  Throwing with `{ cause: error }` (or throwing `error` first) and wrapping `run_migrations` in a
+  `die` would cover both.
+
+## A framework 4xx with a code of its own answers `bad_request`
+
+- Where: `server/src/shared/errors.ts`, `registerErrorHandler`, the branch that answers any other
+  4xx as `bad_request`; `web/src/routes/Login.tsx`, `submit`, and `web/src/errors.ts`, `COPY`
+- Found: 2026-10-01, building the login screen (the 429); 2026-10-10, in the final review of
+  slice 1 (the 413)
+- Problem: two framework errors have a code in `rules/http.md` and get `bad_request` instead.
+  After `LOGIN_ATTEMPTS_PER_MINUTE` failures (10 by default), `POST /api/login` answers 429 with
+  `{"error":"bad_request","message":"Rate limit exceeded, retry in 1 minute"}`, and the login
+  screen shows "The server refused that request." A body over the route's limit
+  (`FST_ERR_CTP_BODY_TOO_LARGE`) answers 413 with `bad_request` where the rule names
+  `payload_too_large`. Fail ten sign-ins in a minute, then try the right password; or post an
+  ingest batch over the body limit.
+- Impact: the owner who mistypes a few times is told the server refused them, with no hint that
+  waiting a minute fixes it. A client reading `error` cannot tell an oversize body from any other
+  refusal. A small status-to-code map in the handler (413 to `payload_too_large`, 429 to a new
+  `rate_limited`) and a `COPY` line for `rate_limited` would close both. The malformed
+  percent-escape entry below is the third framework 4xx in the wrong shape, fixed elsewhere
+  (Fastify's `frameworkErrors`).
+
+## Two unit test files keep their cases in test bodies, not datasets
+
+- Where: `server/tests/unit/config.test.ts`, every case but the `TRUST_PROXY` table;
+  `server/tests/unit/bytes.test.ts`, `byteLength` and `guardBytes`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: `rules/testing.md` puts cases in typed tables read by a parameterised runner. Here the
+  bad positive integers are inlined two to an `it`, and `byteLength` packs three inputs into one
+  `it` with inline assertions.
+- Impact: small. Adding a case means copying an assertion rather than adding a row, and a failure
+  in a packed `it` hides the cases after it.
+
+## npm warns that five packages' install scripts are not covered by `allowScripts`
+
+- Where: `package.json`, which has no `allowScripts`; seen on `npm install` in a fresh clone
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: every fresh install warns that the install scripts of `esbuild`, `fsevents`,
+  `cpu-features`, `protobufjs` and `ssh2` are "not yet covered by allowScripts". Nothing fails
+  today.
+- Impact: like the advisory below, a warning on every install trains a reader to ignore the next
+  one, and an npm that enforces the setting could stop `esbuild`, and with it Vite, from
+  installing. Listing the five, or deciding which to refuse, would end it.
+
+## `./run test:ui` empties the dashboard of a running `./run start`
+
+- Where: `tests/ui/global-setup.ts`, `run('npm', ['run', 'build'])`; `web/vite.config.ts`,
+  `emptyOutDir: true` into `server/public`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: the journeys build the product into the same `server/public/` that `./run start` serves
+  from, and Vite empties that directory before writing. Start `./run start`, run `./run test:ui`
+  beside it: while the build runs, the running server's files are gone from under it, and if the
+  build fails they stay gone. Reasoned from the build configuration; not reproduced.
+- Impact: a developer who keeps the product running while running the journeys sees it break, for
+  a reason that has nothing to do with their change. Building the journeys into a directory of
+  their own would separate them.
+
+## A crash is printed only after vigil's flush
+
+- Where: `client/src/node.ts`, `onUncaught`, `await flushWithin(...)` before
+  `await printAsNodeWould(error)`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: when vigil ends the process, it flushes first (for up to `fatalFlushMs`, default 1,000)
+  and prints the error afterwards. A supervisor that kills the process within that window, or a
+  hang in the flush the timeout does not cover, leaves no stack in the host's own logs.
+- Impact: the one copy of the crash an operator reads without vigil — stderr — can be lost exactly
+  when vigil is unreachable. Printing first and then flushing costs nothing.
+
+## A long message changes how many frames vigil keeps of its own stack, splitting its issues
+
+- Where: `server/src/self/record.ts`, `fitStack`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: the stack is cut at the last whole line that fits, and a stack begins with its message.
+  A long message uses up the budget the frames need, so one throw site keeps five frames, one to
+  four, or none, depending on the length of that occurrence's message. The fingerprint reads the
+  top five frames, so each length band becomes a separate issue, and with no frames left the
+  culprit is lost too.
+- Impact: one of vigil's own failures with a variable message shows as several issues under
+  `vigil`. The client already cuts the header first and keeps frames (`fitStack` in
+  `client/src/payload.ts`); porting that here would fix it.
+
+## The culprit follows the latest event under an explicit fingerprint
+
+- Where: `server/src/modules/ingest/ingest.service.ts`, `recordOne`, `update.culprit = culprit`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: every event with a stack overwrites the issue's `culprit`. Under a computed fingerprint
+  that is harmless, since one issue means one set of frames. Under an explicit fingerprint,
+  different stacks share an issue, and "where in the code" flips to whichever arrived last.
+- Impact: the issue detail names a different place in the code from one refresh to the next, for
+  exactly the issues the owner grouped on purpose. Keeping the first culprit, or the most frequent,
+  would make it stable.
+
+## Six check constraints are never shown to refuse anything
+
+- Where: `server/src/db/migrations/001_initial.ts`; `server/tests/integration/migrations.test.ts`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: `apps_slug_is_a_slug`, `apps_name_not_blank`, `issues_environment_not_blank`,
+  `issues_runtime_known`, `events_count_positive` and `ingest_keys_digest_is_sha256` have no test
+  that inserts a violating row. Only `issues_status_known` has one.
+- Impact: a later migration could loosen a regex or drop a constraint and every suite would stay
+  green. One dataset of violating rows, each expecting a `23514` refusal, would pin all six.
+
 ## An uncaught exception in vigil itself is not recorded, and ends the process
 
 - Where: `server/src/server.ts`, which adds no `uncaughtException` or `unhandledRejection`
@@ -134,19 +301,6 @@ same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 - Impact: small at one host's scale, but the filter silently hides an environment rather than
   saying it cannot list them all, and the sample costs a 200-row request on every change of
   application. A `GET /api/environments` (distinct over `issues`) would answer it exactly.
-
-## A rate-limited sign-in says "The server refused that request."
-
-- Where: `web/src/routes/Login.tsx`, `submit`, and `web/src/errors.ts`, `COPY`; the server side is
-  `server/src/shared/errors.ts`, which answers any 4xx that is not an `AppError` as `bad_request`
-- Found: 2026-10-01, building the login screen
-- Problem: after `LOGIN_ATTEMPTS_PER_MINUTE` failures (10 by default), `POST /api/login` answers
-  429 with `{"error":"bad_request","message":"Rate limit exceeded, retry in 1 minute"}`. The 429
-  carries no code of its own, so the screen looks up `bad_request` and shows "The server refused
-  that request." Fail ten sign-ins in a minute, then try the right password.
-- Impact: the owner who mistypes a few times is told the server refused them, with no hint that
-  waiting a minute fixes it, and may well conclude the server is broken. The server needs a
-  `rate_limited` code (from the rate limiter's `errorResponseBuilder`) and `COPY` a line for it.
 
 ## The dev proxy sends `/api` to port 4100 whatever `PORT` says
 

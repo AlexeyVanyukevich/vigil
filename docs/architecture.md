@@ -227,8 +227,11 @@ producer of `vigil` events and refusing would lose the failure. Closing the serv
 writes still in flight. The recorded environment is `production` when `NODE_ENV=production` and
 `development` otherwise.
 
-A failure that kills the process — an uncaught exception in vigil itself, or a database
-connection dropping — is not recorded; see `docs/backlog.md`.
+A database connection that fails while idle in the pool, as every idle one does when Postgres
+restarts, is logged through the server's logger (the listener `server/src/server.ts` passes to
+`createDb` in `server/src/db/client.ts`) and is not recorded; the pool opens a fresh connection
+for the next query, and the process keeps running. A failure that kills the process — an
+uncaught exception in vigil itself — is not recorded; see `docs/backlog.md`.
 
 ## What is not built yet
 

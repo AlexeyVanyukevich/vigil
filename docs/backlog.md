@@ -404,13 +404,3 @@ same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
   Every `onClose` hook — including the drain of vigil's own error recordings — is skipped.
 - Impact: on every deploy or restart, recordings in flight are lost and connections are dropped
   rather than closed.
-
-## The database pool has no error listener, so a Postgres restart crashes vigil
-
-- Where: `server/src/db/client.ts`, `createDb`
-- Found: 2026-09-30, reviewing slice 1's self-monitoring
-- Problem: `new pg.Pool(...)` has no `pool.on('error', …)`. When an idle connection fails — as it does
-  when Postgres restarts — pg emits `'error'` with no listener, which Node treats as an unhandled
-  error and exits.
-- Impact: a monitoring service that dies whenever its own database blinks. The failure never reaches
-  the self-recorder, because the process is gone.

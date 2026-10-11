@@ -142,7 +142,9 @@ query cache before leaving, and the login screen clears it again when it mounts.
    which refuses unknown fields and more than `MAX_EVENTS_PER_BATCH` events, under a body limit
    derived from the caps (`server/src/modules/ingest/ingest.body-limit.ts`).
 6. **The batch is recorded** by `IngestService.record` (`server/src/modules/ingest/ingest.service.ts`).
-   NUL characters are replaced, since Postgres refuses them. A stack over `MAX_STACK_BYTES` or a
+   NUL characters are replaced with U+FFFD, since Postgres refuses them, and so is an unpaired
+   surrogate in the context, which `jsonb` refuses too (`server/src/shared/nul.ts`); either would
+   otherwise fail the whole batch. A stack over `MAX_STACK_BYTES` or a
    context over `MAX_CONTEXT_BYTES` refuses the whole batch with `413 payload_too_large`: oversize
    events are rejected, not truncated and kept. Each event is grouped by `fingerprintOf`
    (`server/src/shared/fingerprint.ts`).

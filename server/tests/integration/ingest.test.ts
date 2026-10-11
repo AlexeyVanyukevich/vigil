@@ -405,6 +405,40 @@ const NUL_CASES: NulCase[] = [
     column: 'context',
     stored: { 'k\uFFFD': 1, nested: { 'x\uFFFDy': true } },
   },
+  // `JSON.stringify` writes an unpaired surrogate as the escape `\udXXX`, and Postgres's JSON
+  // lexer refuses that escape in `jsonb` just as it refuses `\u0000`. Text cut with `.slice` in
+  // the middle of an emoji is ordinary host code, so it is replaced on the same terms as NUL. A
+  // text column needs no such step, since node-postgres encodes a lone surrogate as U+FFFD.
+  {
+    where: 'the message, as a lone high surrogate',
+    patch: { message: 'smile \uD83D\uDE00'.slice(0, 7) },
+    column: 'message',
+    stored: 'smile \uFFFD',
+  },
+  {
+    where: 'a context value, as a lone high surrogate',
+    patch: { context: { input: 'smile \uD83D\uDE00'.slice(0, 7) } },
+    column: 'context',
+    stored: { input: 'smile \uFFFD' },
+  },
+  {
+    where: 'a context key, as a lone low surrogate',
+    patch: { context: { [`k${'\uD83D\uDE00'.slice(1)}`]: 1 } },
+    column: 'context',
+    stored: { 'k\uFFFD': 1 },
+  },
+  {
+    where: 'a context value, as a valid surrogate pair kept intact',
+    patch: { context: { input: 'smile \uD83D\uDE00' } },
+    column: 'context',
+    stored: { input: 'smile \uD83D\uDE00' },
+  },
+  {
+    where: 'a context value, as a backslash followed by the text ud83d kept literal',
+    patch: { context: { path: 'C:\\ud83d', nested: { 'key\\udc00': 'x\\\\ud83d' } } },
+    column: 'context',
+    stored: { path: 'C:\\ud83d', nested: { 'key\\udc00': 'x\\\\ud83d' } },
+  },
 ]
 
 // Each of these decides the fingerprint of a stackless event.
@@ -419,9 +453,9 @@ const GROUPING_CASES: GroupingCase[] = [
   { where: 'the fingerprint', patch: (text) => ({ fingerprint: `checkout${text}` }) },
 ]
 
-describe('a NUL byte', () => {
+describe('a NUL byte or a lone surrogate', () => {
   it.each(NUL_CASES)(
-    'in $where is stored as U+FFFD rather than failing the batch',
+    'in $where is stored without failing the batch',
     async ({ patch, column, stored }) => {
       const poisoned = batch()
       Object.assign(poisoned.events[0]!, patch)

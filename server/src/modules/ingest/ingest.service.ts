@@ -3,7 +3,7 @@ import { sql } from 'kysely'
 import type { Database } from '../../db/schema.js'
 import { fingerprintOf } from '../../shared/fingerprint.js'
 import { guardBytes } from '../../shared/bytes.js'
-import { replaceNul, stringifyWithoutNul } from '../../shared/nul.js'
+import { replaceNul, stringifyWithoutNulOrLoneSurrogate } from '../../shared/nul.js'
 import type { IngestBodyType } from './ingest.schemas.js'
 
 export interface RecordedIssue {
@@ -15,7 +15,7 @@ export interface RecordedIssue {
 
 /**
  * An event as it is stored: every string that reaches a column has lost its U+0000, and
- * `context` is already the JSON text written to its column.
+ * `context` is already the JSON text written to its column, without a lone surrogate either.
  */
 interface CleanEvent {
   type: string
@@ -52,7 +52,9 @@ export class IngestService {
   async record(appId: string, received: IngestBodyType): Promise<RecordedIssue[]> {
     // Every string that reaches a column — `stack`, `message`, `type`, `fingerprint`,
     // `environment`, and `context`'s keys and values — loses its U+0000, which Postgres refuses
-    // outright: one such event would otherwise fail the whole batch. Done before the byte guards
+    // outright: one such event would otherwise fail the whole batch. `context` also loses its
+    // unpaired surrogates, which `jsonb` refuses too; the text columns need no such step, since
+    // node-postgres encodes a lone surrogate as U+FFFD on the way in. Done before the byte guards
     // and the fingerprint below, so the caps measure what is stored and grouping sees it too.
     const environment = replaceNul(received.environment)
     const events = received.events.map((event): CleanEvent => ({
@@ -61,7 +63,8 @@ export class IngestService {
       stack: event.stack === undefined ? null : replaceNul(event.stack),
       occurredAt: new Date(event.occurred_at),
       count: event.count ?? 1,
-      context: event.context === undefined ? null : stringifyWithoutNul(event.context),
+      context:
+        event.context === undefined ? null : stringifyWithoutNulOrLoneSurrogate(event.context),
       fingerprint: event.fingerprint === undefined ? undefined : replaceNul(event.fingerprint),
     }))
 

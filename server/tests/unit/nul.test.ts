@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { replaceNul, stringifyWithoutNul } from '../../src/shared/nul.js'
+import { replaceNul, stringifyWithoutNulOrLoneSurrogate } from '../../src/shared/nul.js'
 
 interface StringCase {
   name: string
@@ -66,17 +66,64 @@ const VALUE_CASES: ValueCase[] = [
     output: { at: '2026-09-05T12:34:56.789Z' },
   },
   { name: 'honours toJSON', input: { v: { toJSON: () => 'x\u0000' } }, output: { v: 'x\uFFFD' } },
+  // `JSON.stringify` escapes an unpaired surrogate as `\udXXX`, which Postgres's `jsonb` refuses
+  // as it refuses `\u0000`. A valid pair is written as itself, never escaped.
+  {
+    name: 'replaces a lone high surrogate in a value',
+    input: { v: 'smile \ud83d' },
+    output: { v: 'smile \uFFFD' },
+  },
+  {
+    name: 'replaces a lone low surrogate in a key',
+    input: { 'k\ude00': 1 },
+    output: { 'k\uFFFD': 1 },
+  },
+  {
+    name: 'replaces a low surrogate before its high, as two lone ones',
+    input: { v: '\ude00\ud83d' },
+    output: { v: '\uFFFD\uFFFD' },
+  },
+  {
+    name: 'replaces a lone surrogate at either end of the surrogate range',
+    input: { v: '\ud800', w: '\udfff' },
+    output: { v: '\uFFFD', w: '\uFFFD' },
+  },
+  {
+    name: 'keeps a valid surrogate pair',
+    input: { v: 'smile \uD83D\uDE00' },
+    output: { v: 'smile \uD83D\uDE00' },
+  },
+  {
+    name: 'keeps a pair beside a lone surrogate',
+    input: { v: '\uD83D\uDE00\ud83d\uD83D\uDE00' },
+    output: { v: '\uD83D\uDE00\uFFFD\uD83D\uDE00' },
+  },
+  {
+    name: 'leaves a backslash followed by the text ud83d unchanged',
+    input: { v: '\\ud83d', 'k\\udc00': 'x\\\\ud83d' },
+    output: { v: '\\ud83d', 'k\\udc00': 'x\\\\ud83d' },
+  },
+  {
+    name: 'replaces a lone surrogate after a backslash',
+    input: { v: '\\\ud83d' },
+    output: { v: '\\\uFFFD' },
+  },
+  {
+    name: 'leaves code points beside the surrogate range unchanged',
+    input: { v: '\ud7ff\ue000' },
+    output: { v: '\ud7ff\ue000' },
+  },
 ]
 
-describe('stringifyWithoutNul', () => {
+describe('stringifyWithoutNulOrLoneSurrogate', () => {
   it.each(VALUE_CASES)('$name', ({ input, output }) => {
-    expect(JSON.parse(stringifyWithoutNul(input))).toEqual(output)
+    expect(JSON.parse(stringifyWithoutNulOrLoneSurrogate(input))).toEqual(output)
   })
 
   // The context cap is measured on this output, so it must cost exactly what `JSON.stringify`
   // does: a caller measuring either sees the same number.
   it.each(VALUE_CASES)('keeps the byte length of JSON.stringify when it $name', ({ input }) => {
-    expect(Buffer.byteLength(stringifyWithoutNul(input))).toBe(
+    expect(Buffer.byteLength(stringifyWithoutNulOrLoneSurrogate(input))).toBe(
       Buffer.byteLength(JSON.stringify(input)),
     )
   })
@@ -84,7 +131,7 @@ describe('stringifyWithoutNul', () => {
   it('handles nesting deeper than a recursive walk could', () => {
     let nested: unknown = '\u0000'
     for (let depth = 0; depth < 100_000; depth++) nested = [nested]
-    const json = stringifyWithoutNul({ k: nested })
+    const json = stringifyWithoutNulOrLoneSurrogate({ k: nested })
     expect(json).toBe(`{"k":${'['.repeat(100_000)}"\\ufffd"${']'.repeat(100_000)}}`)
   })
 })

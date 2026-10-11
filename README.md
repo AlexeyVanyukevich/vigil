@@ -90,6 +90,11 @@ the process; authorization and cookie headers and keys named like passwords, tok
 are scrubbed without being listed. `install` never throws: with a missing `url`, `key` or
 `environment` it logs one line and returns a client that does nothing.
 
+**A short-lived script must flush before it ends.** Nothing is sent when a process ends normally,
+so a cron job or CLI tool that captures an error and then finishes loses it unless it calls
+`await vigil.flush()` (or `close()`) first. The backlog entry "What a script captures just before
+it ends normally is never sent" describes the gap.
+
 **`install` changes how the application dies.** Node exits on an uncaught exception only while
 no listener is registered for it, and `install` registers one. So when vigil's is the only
 `uncaughtException` listener, vigil flushes what it has queued (for at most a second), prints the
@@ -97,8 +102,9 @@ error as Node would, and exits with code 1. An application with an `uncaughtExce
 its own keeps the decision: vigil reports the error and leaves the process running, as Node
 would. `exitOnUncaught: false` stops vigil ever ending the process; set it only when the
 application ends the process itself in a way vigil cannot see, because with no handler at all a
-crashed process then carries on. This is the one way the package changes how an application
-behaves.
+crashed process then carries on. Apart from the details of that exit, which differ from Node's
+own in the ways the backlog entry "The fatal path imitates Node's default rather than handing back
+to it" lists, this is the one way the package changes how an application behaves.
 
 ## Relationship to the monitored applications
 

@@ -7,13 +7,11 @@ says **why** the system has the shape it does and what the later slices will add
 reasons, never for behaviour. Known defects that were found and not yet fixed are listed in
 [`docs/backlog.md`](backlog.md), not here.
 
-Three roles recur below:
+Two roles recur below:
 
 - **The owner** — the one person who signs in to the dashboard.
 - **A monitored application** — any application on the host that reports to vigil through the
   client package. **The reference application** is the first of them.
-- **The host** — whichever process has installed the client package, from the client's point of
-  view.
 
 Slice 1 of the design's build order is built: errors are recorded end to end, from a Node
 application to the dashboard. Alerting, uptime monitoring and browser errors are not built; see
@@ -57,8 +55,11 @@ Postgres 16 runs from `docker-compose.yml` as the service `db`, published on hos
 data lives in the compose volume `db-data`. Nothing else runs: there is no worker, no prober and
 no scheduled job.
 
-Every error response has the shape `{ "error": "<code>", "message": "…", "details": {} }`, built
-in `server/src/shared/errors.ts`. Code lives in `server/src/modules/<entity>/`, split into
+Every error response has the shape `{ "error": "<code>", "message": "…", "details": {} }`. Two
+places build them: the error handler in `server/src/shared/errors.ts`, for whatever a route, a
+hook or a schema throws, and the not-found handler in `server/src/app.ts`, for the JSON 404 under
+`/api` and `/ingest`. One answer escapes both: a path with a malformed percent-escape is refused by
+Fastify before routing, in Fastify's own shape (`FST_ERR_BAD_URL`; see `docs/backlog.md`). Code lives in `server/src/modules/<entity>/`, split into
 routes, schemas, service and repository files where a module needs them.
 
 ## The two credentials
@@ -141,8 +142,18 @@ query cache before leaving, and the login screen clears it again when it mounts.
    `maxQueue` distinct failures (default 100) and drops the oldest past that. A repeat of a
    queued failure increments that event's `count` instead of taking a slot.
 4. **A batch is posted** (`send` in `client/src/transport.ts`) to `POST /ingest/events` with the
-   key as a bearer token: every `flushIntervalMs` (default 5,000, on a timer that never keeps the
-   process alive), on `close()`, and when the process is dying. A batch that fails is not retried.
+   key as a bearer token, whenever the queue is flushed (`client/src/node.ts`):
+   - every `flushIntervalMs` (default 5,000), on a timer that never keeps the process alive;
+   - when the application calls `flush()` or `close()`;
+   - at once after an unhandled rejection that does not end the process;
+   - at once after an uncaught exception the application keeps alive, because it has an
+     `uncaughtException` handler of its own or set `exitOnUncaught: false`;
+   - when vigil ends the process after an uncaught exception, for at most `fatalFlushMs`
+     (default 1,000).
+
+   Nothing else flushes: what a script queues just before it ends normally is never sent (see
+   `docs/backlog.md`). A batch that fails is not retried.
+
 5. **The key names the application** (`onRequest` in `server/src/modules/ingest/ingest.routes.ts`).
    The body is then validated against `IngestBody` (`server/src/modules/ingest/ingest.schemas.ts`),
    which refuses unknown fields and more than `MAX_EVENTS_PER_BATCH` events, under a body limit
@@ -237,7 +248,8 @@ A database connection that fails while idle in the pool, as every idle one does 
 restarts, is logged through the server's logger (the listener `server/src/server.ts` passes to
 `createDb` in `server/src/db/client.ts`) and is not recorded; the pool opens a fresh connection
 for the next query, and the process keeps running. A failure that kills the process — an
-uncaught exception in vigil itself — is not recorded; see `docs/backlog.md`.
+uncaught exception in vigil itself — is not recorded; see "An uncaught exception in vigil itself
+is not recorded, and ends the process" in `docs/backlog.md`.
 
 ## What is not built yet
 

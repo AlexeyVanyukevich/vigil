@@ -3,6 +3,24 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## An uncaught exception in vigil itself is not recorded, and ends the process
+
+- Where: `server/src/server.ts`, which adds no `uncaughtException` or `unhandledRejection`
+  listener; `server/src/self/record.ts`, called only from the error handler in
+  `server/src/shared/errors.ts`
+- Found: 2026-10-10, in the final review of slice 1
+- Problem: the self-recorder hears only of failures a request's error handler catches. A throw
+  from a timer or an event listener, or a rejected promise nobody awaits, outside any request,
+  reaches Node's default handling: the stack is printed to stderr and the process exits with
+  code 1. Nothing is written under the `vigil` application. Add
+  `setTimeout(() => { throw new Error('boom') }, 1000)` to `server.ts` and run `./run start`: the
+  process exits, and once vigil is started again the dashboard shows no such issue. Reasoned from Node's
+  default behaviour; not reproduced.
+- Impact: the monitor goes down without a trace in its own dashboard, and `./run start` has no
+  supervisor to bring it back, so every monitored application's batches fail until someone
+  notices. A listener that records the failure under a short deadline before exiting, and a
+  supervisor in the deployment, would cover it.
+
 ## `npm install` reports a high-severity advisory in a build-time dependency
 
 - Where: `package-lock.json`, `source-map-js@1.2.1`, pulled in by `web/`'s `vite` (through
@@ -182,7 +200,8 @@ same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
   `--unhandled-rejections=warn-with-error-code`, vigil sets the exit code but does not print Node's
   `UnhandledPromiseRejectionWarning` line.
 - Impact: small. A host that reads `origin`, relies on the core dump, or greps its logs for the
-  warning line behaves differently once vigil is installed. Exit codes match Node's in every mode.
+  warning line behaves differently once vigil is installed. Exit codes match Node's in every mode
+  except under `--abort-on-uncaught-exception`, where Node aborts and vigil exits 1.
 
 ## A collapsed run stops counting at 1,000,000 until the next flush
 

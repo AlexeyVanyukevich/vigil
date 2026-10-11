@@ -344,8 +344,10 @@ The migrate script and `set-password.ts` read `DATABASE_URL` and need the worksp
 dependencies installed, since `tsx` is a development dependency. The password is read from
 standard input when it is not a terminal, must be at least 12 characters, and signs every device
 out; run again, it changes the password. `./run migrate` and `./run owner:password` do the same
-for the compose database but also start it, so a deployment does not use them. The design record requires a public hostname over TLS, which puts a reverse proxy in
-front of vigil. Four things must then be right, and each fails without an error at start-up:
+for the compose database but also start it, so a deployment does not use them.
+
+The design record requires a public hostname over TLS, which puts a reverse proxy in front of
+vigil. Four things must then be right, and each fails without an error at start-up:
 
 - **The proxy terminates TLS** on the public hostname and forwards to vigil's port. Without it,
   the owner's password, the session cookie and every application's ingest key cross the network

@@ -7,17 +7,29 @@ import type { Database } from './schema.js'
 pg.types.setTypeParser(pg.types.builtins.INT8, (value) => Number(value))
 
 /**
- * `onIdleError` hears from a connection that fails while it sits idle in the pool, as every
- * idle one does when Postgres restarts. pg emits that on the pool, and an `'error'` event with no
- * listener ends the process. The pool has already discarded the connection and opens a fresh one
- * when next asked, so reporting it is all there is to do. The server passes its logger; a
+ * `onConnectionError` hears from a connection that fails, as every one does when Postgres
+ * restarts. pg emits that as an `'error'` event on the client, and an event with no listener ends
+ * the process. While the connection sits idle, pg-pool listens and re-emits it on the pool; while
+ * a request holds it, nobody does, so a listener goes on each client as it connects. A query in
+ * flight still rejects to its caller. The pool discards the failed connection and opens a fresh
+ * one when next asked, so reporting is all there is to do. The server passes its logger; a
  * one-shot script may leave it out, since its next query would fail anyway.
  */
 export function createDb(
   connectionString: string,
-  onIdleError?: (error: Error) => void,
+  onConnectionError?: (error: Error) => void,
 ): Kysely<Database> {
   const pool = new pg.Pool({ connectionString })
-  if (onIdleError !== undefined) pool.on('error', onIdleError)
+  if (onConnectionError !== undefined) {
+    // An idle failure reaches both listeners with the same error; report it once.
+    const reported = new WeakSet<Error>()
+    const report = (error: Error): void => {
+      if (reported.has(error)) return
+      reported.add(error)
+      onConnectionError(error)
+    }
+    pool.on('error', report)
+    pool.on('connect', (client) => client.on('error', report))
+  }
   return new Kysely<Database>({ dialect: new PostgresDialect({ pool }) })
 }

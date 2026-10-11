@@ -4,9 +4,9 @@ import { createDb } from './db/client.js'
 
 const config = loadConfig(process.env)
 // Reads `app` only when it is called, and it cannot be called before `app` exists: a connection
-// fails while idle only after a query has run, and building the app runs none.
+// fails only after a query has run, and building the app runs none.
 const db = createDb(config.databaseUrl, (error) => {
-  app.log.error({ err: error }, 'an idle database connection failed; the pool will replace it')
+  app.log.error({ err: error }, 'a database connection failed; the pool will replace it')
 })
 const app = await buildApp({ config, db })
 

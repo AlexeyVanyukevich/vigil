@@ -76,17 +76,76 @@ const logLines = (): LogLine[] =>
     .filter((line) => line.startsWith('{'))
     .map((line) => JSON.parse(line) as LogLine)
 
-describe('a connection that fails while idle in the pool', () => {
+const terminateBackends = () =>
+  sql<{ terminated: boolean }>`
+    select pg_terminate_backend(pid) as terminated from pg_stat_activity
+    where application_name = ${APPLICATION_NAME}
+  `.execute(getTestDb())
+
+/** Resolves once one of this process's backends is blocked waiting for a lock. */
+async function waitForBlockedBackend(): Promise<void> {
+  const deadline = Date.now() + 15_000
+  for (;;) {
+    const blocked = await sql`
+      select 1 from pg_stat_activity
+      where application_name = ${APPLICATION_NAME} and wait_event_type = 'Lock'
+    `.execute(getTestDb())
+    if (blocked.rows.length > 0) return
+    if (Date.now() > deadline) throw new Error(`no backend ever blocked:\n${output}`)
+    await new Promise((done) => setTimeout(done, 50))
+  }
+}
+
+interface Case {
+  name: string
+  /** Leaves the server's connection in the state under test, then terminates its backend. */
+  breakConnection: (base: string) => Promise<() => Promise<number>>
+}
+
+// The two states a pooled connection is in when Postgres goes away: the pool holds it, or a
+// request does. pg-pool listens for errors on the first and nothing does on the second.
+const cases: Case[] = [
+  {
+    name: 'idle in the pool',
+    breakConnection: async (base) => {
+      expect((await askForSession(base)).status).toBe(401)
+      const terminated = await terminateBackends()
+      expect(terminated.rows.length).toBeGreaterThan(0)
+      return async () => 401
+    },
+  },
+  {
+    name: 'checked out, with a query in flight',
+    breakConnection: async (base) => {
+      // A real way to keep a request's query running: another session holds the lock its
+      // session lookup needs. The lock is released once the backend is gone.
+      let release!: () => void
+      const held = new Promise<void>((done) => (release = done))
+      let locked!: () => void
+      const lockTaken = new Promise<void>((done) => (locked = done))
+      const holder = getTestDb()
+        .transaction()
+        .execute(async (trx) => {
+          await sql`lock table sessions in access exclusive mode`.execute(trx)
+          locked()
+          await held
+        })
+      await lockTaken
+      const pending = askForSession(base).then((response) => response.status)
+      await waitForBlockedBackend()
+      const terminated = await terminateBackends()
+      expect(terminated.rows.length).toBeGreaterThan(0)
+      release()
+      await holder
+      return () => pending
+    },
+  },
+]
+
+describe.each(cases)('a connection that fails while $name', ({ breakConnection }) => {
   it('is logged, and the server keeps running and answering', async () => {
     const base = await startServer()
-    expect((await askForSession(base)).status).toBe(401)
-
-    // What a Postgres restart does to every idle connection, done to this process's alone.
-    const terminated = await sql<{ terminated: boolean }>`
-      select pg_terminate_backend(pid) as terminated from pg_stat_activity
-      where application_name = ${APPLICATION_NAME}
-    `.execute(getTestDb())
-    expect(terminated.rows.length).toBeGreaterThan(0)
+    const outcome = await breakConnection(base)
 
     await waitFor(
       () => logLines().some((line) => line.err?.code === '57P01'),
@@ -94,6 +153,9 @@ describe('a connection that fails while idle in the pool', () => {
     )
     const logged = logLines().find((line) => line.err?.code === '57P01')
     expect(logged?.level).toBe(50)
+
+    // The request that held the connection answers rather than hangs (an idle one has none).
+    expect([401, 500]).toContain(await outcome())
 
     // Still alive, and the pool opened a fresh connection for the next query.
     expect(child?.exitCode).toBeNull()

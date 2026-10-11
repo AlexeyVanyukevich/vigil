@@ -48,7 +48,9 @@ the dashboard with hot reload instead, the dashboard on http://localhost:5174.
 `Secure`, and a browser will not store a `Secure` cookie over plain http: signing in appears to
 work and the next request is signed out. `./run start` refuses to start with it set for that
 reason. **A deployment served over https sets `NODE_ENV=production`**, so the cookie is never
-sent unencrypted.
+sent unencrypted. Behind a reverse proxy it also needs the proxy to pass `Host` through unchanged
+and `TRUST_PROXY` set to the proxy's address; [Deploying](docs/architecture.md#deploying) says
+why, and what fails without each.
 
 `./run check` is the gate before every commit: formatting, types, and the server, client and
 dashboard suites. `./run test:ui` drives the built product in a browser; install the browser it

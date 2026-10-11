@@ -88,15 +88,80 @@ describe('login', () => {
   })
 })
 
+// Two attempts a minute, so the third from one client is the first refused. `inject` arrives
+// from 127.0.0.1 unless `from` says otherwise: the proxy's address, in the cases that set
+// TRUST_PROXY to it. What differs between clients is the `X-Forwarded-For` the proxy adds.
+interface RateLimitCase {
+  name: string
+  trustProxy: string[]
+  attempts: { from?: string; forwardedFor?: string; status: number }[]
+}
+
+const RATE_LIMIT_CASES: RateLimitCase[] = [
+  {
+    name: 'stops answering after too many attempts from one address',
+    trustProxy: [],
+    attempts: [{ status: 401 }, { status: 401 }, { status: 429 }],
+  },
+  // Unset, a forwarded address is not believed: behind a proxy, every client shares one budget.
+  {
+    name: 'counts by socket address, whatever is forwarded, with TRUST_PROXY unset',
+    trustProxy: [],
+    attempts: [
+      { forwardedFor: '203.0.113.1', status: 401 },
+      { forwardedFor: '203.0.113.2', status: 401 },
+      { forwardedFor: '203.0.113.3', status: 429 },
+    ],
+  },
+  {
+    name: 'counts by forwarded address with TRUST_PROXY naming the proxy',
+    trustProxy: ['127.0.0.1'],
+    attempts: [
+      { forwardedFor: '203.0.113.1', status: 401 },
+      { forwardedFor: '203.0.113.1', status: 401 },
+      { forwardedFor: '203.0.113.1', status: 429 },
+      { forwardedFor: '203.0.113.2', status: 401 },
+    ],
+  },
+  // A proxy appends the address it saw to whatever the client sent. Only the proxy is trusted,
+  // so a client cannot buy a fresh budget by inventing the addresses before that one.
+  {
+    name: 'ignores addresses the client wrote before the proxy appended its own',
+    trustProxy: ['loopback'],
+    attempts: [
+      { forwardedFor: '198.51.100.1, 203.0.113.1', status: 401 },
+      { forwardedFor: '198.51.100.2, 203.0.113.1', status: 401 },
+      { forwardedFor: '198.51.100.3, 203.0.113.1', status: 429 },
+    ],
+  },
+  // A client that reaches the server around the proxy is not the proxy, and is not believed.
+  {
+    name: 'ignores a forwarded address from anyone but the proxy',
+    trustProxy: ['127.0.0.1'],
+    attempts: [
+      { from: '192.0.2.9', forwardedFor: '203.0.113.1', status: 401 },
+      { from: '192.0.2.9', forwardedFor: '203.0.113.2', status: 401 },
+      { from: '192.0.2.9', forwardedFor: '203.0.113.3', status: 429 },
+    ],
+  },
+]
+
 describe('the login rate limit', () => {
-  it('stops answering after too many attempts from one address', async () => {
-    const limited = await buildTestApp({ config: { loginAttemptsPerMinute: 2 } })
+  it.each(RATE_LIMIT_CASES)('$name', async ({ trustProxy, attempts }) => {
+    const limited = await buildTestApp({ config: { loginAttemptsPerMinute: 2, trustProxy } })
     try {
-      const attempt = () =>
-        limited.inject({ method: 'POST', url: '/api/login', payload: { password: 'wrong' } })
-      expect((await attempt()).statusCode).toBe(401)
-      expect((await attempt()).statusCode).toBe(401)
-      expect((await attempt()).statusCode).toBe(429)
+      const statuses: number[] = []
+      for (const { from, forwardedFor } of attempts) {
+        const response = await limited.inject({
+          method: 'POST',
+          url: '/api/login',
+          payload: { password: 'wrong' },
+          ...(from === undefined ? {} : { remoteAddress: from }),
+          ...(forwardedFor === undefined ? {} : { headers: { 'x-forwarded-for': forwardedFor } }),
+        })
+        statuses.push(response.statusCode)
+      }
+      expect(statuses).toEqual(attempts.map(({ status }) => status))
     } finally {
       await limited.close()
     }

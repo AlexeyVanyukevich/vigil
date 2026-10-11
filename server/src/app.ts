@@ -37,6 +37,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       redact: ['req.headers.authorization', 'req.headers.cookie'],
     },
     ajv: { customOptions: { removeAdditional: false } },
+    // Only the proxy named in TRUST_PROXY is believed, so `request.ip`, and with it the login
+    // limit's key, is the address that proxy appended to `X-Forwarded-For`. Unset, a forwarded
+    // address is never believed: right with no proxy, one shared budget behind one. See config.ts.
+    trustProxy: deps.config.trustProxy.length > 0 ? deps.config.trustProxy : false,
   }).withTypeProvider<TypeBoxTypeProvider>()
 
   app.decorate('db', deps.db)

@@ -90,13 +90,18 @@ and a deployment behind https must set it. The session token is stored as a SHA-
 its expiry slides forward at most once an hour (`server/src/modules/auth/auth.service.ts`). A
 wrong password and no password ever set answer the same 401, and the second case verifies
 against a dummy hash so the two take the same time. Login is limited to
-`LOGIN_ATTEMPTS_PER_MINUTE` attempts per minute per client address (default 10).
+`LOGIN_ATTEMPTS_PER_MINUTE` attempts per minute per client address (default 10). The client
+address is the connection's, or, when the connection comes from a proxy that `TRUST_PROXY` names,
+the address that proxy appended to `X-Forwarded-For` (`server/src/config.ts`, passed to Fastify's
+`trustProxy` in `server/src/app.ts`). Behind a proxy that `TRUST_PROXY` does not name, every
+client has the proxy's address and shares one budget; see [Deploying](#deploying).
 
 **The guard** is two `onRequest` hooks in `server/src/modules/auth/guard.ts`, and both are scoped
 to `/api` only, so an application posting to `/ingest/events` is never asked for a cookie:
 
 - A write (anything but `GET` and `HEAD`) that carries an `Origin` whose host differs from the
-  request's `Host` is refused with `403 forbidden_origin`.
+  request's `Host` is refused with `403 forbidden_origin`. Behind a reverse proxy this holds only
+  while the proxy passes `Host` through unchanged; see [Deploying](#deploying).
 - Any `/api` route not marked public needs a live session, or answers `401 unauthorized`.
 
 Both hooks decide on `request.routeOptions.url`, the route pattern the request matched, never on
@@ -296,6 +301,7 @@ Configuration is read from the environment, and `./run` loads `.env`, creating i
 `.env.example` on first use. `server/src/config.ts` validates it: `DATABASE_URL` is required, and
 `PORT`, `SESSION_TTL_DAYS`, `LOGIN_ATTEMPTS_PER_MINUTE`, `LOG_LEVEL`, `MAX_EVENTS_PER_BATCH`,
 `MAX_STACK_BYTES` and `MAX_CONTEXT_BYTES` have the defaults shown in `.env.example`.
+`TRUST_PROXY` is empty by default, trusting no proxy; see [Deploying](#deploying).
 
 The server and browser suites start their own Postgres with Testcontainers; neither touches the
 compose database. `./run test:ui` builds the product, starts it against a throwaway database and
@@ -305,3 +311,30 @@ drives it in Chromium through Playwright; the browser builds must be installed o
 The shared conventions — TypeScript settings, error shape, layout, tests, commits, documentation —
 come from the `dev-kit` package, installed from its Git repository at tag `v1.2.1` (root
 `package.json`) and imported by `CLAUDE.md`.
+
+## Deploying
+
+There is no deployment artefact yet: no container image, no service definition, and `./run start`
+refuses `NODE_ENV=production`, so a deployment builds with `./run build` and starts the built
+server itself (`npm run --workspace server start`), with the configuration above in its
+environment. The design record requires a public hostname over TLS, which puts a reverse proxy in
+front of vigil. Four things must then be right, and each fails without an error at start-up:
+
+- **The proxy terminates TLS** on the public hostname and forwards to vigil's port. Without it,
+  the owner's password, the session cookie and every application's ingest key cross the network
+  in clear text.
+- **The proxy passes `Host` through unchanged** (in nginx, `proxy_set_header Host $host;`, since
+  nginx's default rewrites it to the upstream's address). The guard compares `Origin` with `Host`,
+  so without it every write under `/api` — signing in, signing out, changing a status — is refused
+  with `403 forbidden_origin`, and the login screen says only "Could not sign in".
+- **`NODE_ENV=production`.** Without it the session cookie is set without `Secure`, so a browser
+  will send it over plain http too, and vigil's own errors are recorded under the environment
+  `development`.
+- **`TRUST_PROXY` names the proxy's address, and nothing else** (`loopback` when the proxy runs
+  on this host). Unset, every client has the proxy's address and shares one login budget, so
+  anyone can keep the owner locked out with ten wrong passwords a minute. Naming a range that
+  clients connect from lets them choose their own address, and with it their own budget.
+
+None of this has been exercised against a real proxy; the suite covers `TRUST_PROXY` with
+`X-Forwarded-For` headers injected into the app, and the `Host` comparison with requests made
+directly.

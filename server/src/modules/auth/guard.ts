@@ -34,7 +34,9 @@ export function registerGuard(app: FastifyInstance, service: AuthService): void 
   app.decorateRequest('sessionId', '')
 
   // Compared against the host the request was addressed to rather than a configured origin, so
-  // the check keeps working behind a proxy and on an ephemeral test port.
+  // the check needs no setting and works on an ephemeral test port. Behind a reverse proxy it
+  // works only while the proxy passes `Host` through unchanged: one that rewrites it to its
+  // upstream's address (nginx's default) makes every write from the dashboard look foreign.
   //
   // Scoped to /api/ deliberately. `/ingest/*` carries a bearer key and no cookie, so it has no
   // CSRF exposure to defend; applying this here would reject a browser's report out of hand and

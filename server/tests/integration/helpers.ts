@@ -60,6 +60,7 @@ export async function buildTestApp(
     maxEventsPerBatch: 100,
     maxStackBytes: 16_384,
     maxContextBytes: 8_192,
+    trustProxy: [],
     ...overrides.config,
   }
 

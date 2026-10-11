@@ -117,7 +117,7 @@ export async function up(db: Kysely<any>): Promise<void> {
   await db
     .insertInto('apps')
     .values({ slug: 'vigil', name: 'Vigil itself' })
-    .onConflict((oc: any) => oc.column('slug').doNothing())
+    .onConflict((oc) => oc.column('slug').doNothing())
     .execute()
 }
 

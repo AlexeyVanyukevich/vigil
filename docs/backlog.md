@@ -3,6 +3,35 @@
 What is known to be wrong today and not yet fixed. Newest first. Fixing an entry deletes it, in the
 same commit as the fix. See `node_modules/dev-kit/rules/backlog.md`.
 
+## `CLAUDE.md` still says vigil is designed but not built
+
+- Where: `CLAUDE.md`, "The documentation", lines 8–12
+- Found: 2026-10-12, in a prompt audit of the instruction files
+- Problem: the section opens "**Designed, not built.**", says there is no `docs/architecture.md`
+  yet, and tells the reader to read the spec before writing anything. `docs/architecture.md`
+  exists since 2026-10-09 (`8ec5a3b`), the slice 1 plan is archived, and the spec's own status
+  line says slice 1 shipped. The imported documentation rule says a reader is never sent to a
+  spec to learn what the code does; this line does exactly that.
+- Impact: every session loads a statement the repository contradicts, and is pointed at the spec
+  rather than at `docs/architecture.md` for current behaviour. The audit's replacement keeps the
+  two facts only `CLAUDE.md` holds:
+
+      `docs/architecture.md` describes what vigil does today. `docs/superpowers/specs/2026-09-05-vigil-design.md`
+      is the decision record for the whole system: read it for why things are shaped as they are, and
+      for §15, the build order of the slices still to come.
+
+## The shared rules are pinned at dev-kit 1.2.1
+
+- Where: `package.json`, `"dev-kit": "github:AlexeyVanyukevich/dev-kit#v1.2.1"`; the
+  `@node_modules/dev-kit/rules/…` imports in `CLAUDE.md`
+- Found: 2026-10-12, in a prompt audit of the instruction files
+- Problem: the kit is at 2.2.2. 2.0.0 moved every path a consumer writes, so no rule correction
+  made since reaches this project — the release rule, the dataset-table scope, the 2.2.2 trim of
+  the commits and writing rules.
+- Impact: sessions here follow older rule text than the sibling projects on 2.x. Upgrading is a
+  major bump: replace each import as the kit README's "Migrating from 1.x" table says, and
+  `sh/lib.sh` with `common/lib.sh` in the `./run` bootstrap.
+
 ## Two installed crash reporters that each exit only when alone keep a crashed process alive
 
 - Where: `client/src/node.ts`, `onUncaught`, `othersOn('uncaughtException', onUncaught)`
